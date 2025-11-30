@@ -1,0 +1,160 @@
+import apiClient from './apiClient';
+import { PARSE_CLASSES, USER_ROLES } from './apiClient';
+
+// Fetch all staff members
+export async function fetchStaff() {
+  try {
+    const response = await apiClient.get('/users/staff');
+    return response.data || [];
+  } catch (error) {
+    console.error('Error fetching staff:', error);
+    throw error;
+  }
+}
+
+// Fetch all supervisors
+export async function fetchSupervisors() {
+  try {
+    const response = await apiClient.get('/users/supervisors');
+    return response.data || [];
+  } catch (error) {
+    console.error('Error fetching supervisors:', error);
+    throw error;
+  }
+}
+
+export async function fetchManagers() {
+  try {
+    const response = await apiClient.get('/users/managers');
+    return response.data || [];
+  } catch (error) {
+    console.error('Error fetching managers:', error);
+    throw error;
+  }
+}
+
+export async function fetchGeneralManagers() {
+  try {
+    const response = await apiClient.get('/users/general-managers');
+    return response.data || [];
+  } catch (error) {
+    console.error('Error fetching general managers:', error);
+    throw error;
+  }
+}
+
+// Fetch all profiles (admin function)
+export async function fetchProfiles(includeInactive = false) {
+  try {
+    const response = await apiClient.get('/users', {
+      includeInactive: includeInactive
+    });
+    return response.data || [];
+  } catch (error) {
+    console.error('Error fetching profiles:', error);
+    throw error;
+  }
+}
+
+// Update user profile
+export async function updateUserProfile(userId, updates) {
+  try {
+    const response = await apiClient.put(`/users/${userId}`, {
+      full_name: updates.full_name,
+      role: updates.role
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error updating user profile:', error);
+    throw error;
+  }
+}
+
+// Update current user's profile (name, password, and profile photo)
+export async function updateCurrentUserProfile(updates) {
+  try {
+    const user = await apiClient.getUser();
+    if (!user || !user.user_id) {
+      throw new Error('No user logged in');
+    }
+
+    const userId = user.user_id || user.id;
+    const response = await apiClient.put(`/users/${userId}`, {
+      full_name: updates.full_name,
+      password: updates.password,
+      profile_photo_url: updates.profile_photo_url
+    });
+    
+    // Update stored user data
+    if (response.success && response.data) {
+      await apiClient.setUser({ ...user, ...response.data });
+    }
+    
+    return { success: true };
+  } catch (error) {
+    console.error('Error updating current user profile:', error);
+    throw error;
+  }
+}
+
+// Delete user
+export async function deleteUser(userId) {
+  try {
+    await apiClient.delete(`/users/${userId}`);
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting user:', error);
+    throw new Error(error.message || 'Failed to delete user');
+  }
+}
+
+export async function updateUserLeadership(userId, payload) {
+  try {
+    const response = await apiClient.put(`/users/${userId}/leadership`, payload);
+    return response.data;
+  } catch (error) {
+    console.error('Error updating user leadership information:', error);
+    throw new Error(error.message || 'Failed to update leadership data');
+  }
+}
+
+// Fetch assigned supervisors for a staff member
+export async function fetchAssignedSupervisors(staffId) {
+  try {
+    const response = await apiClient.get('/assignments');
+    const assignments = response.data || [];
+    const staffAssignments = assignments.filter(ass => 
+      ass.staff_id === staffId && ass.is_active
+    );
+    
+    return staffAssignments.map(assignment => ({
+      supervisor_id: assignment.supervisor_id,
+      full_name: assignment.supervisor_name,
+      email: null // Email not returned in assignments endpoint
+    }));
+  } catch (error) {
+    console.error('Error fetching assigned supervisors:', error);
+    throw error;
+  }
+}
+
+// Fetch areas (NC Locations)
+export async function fetchAreas() {
+  try {
+    const response = await apiClient.get('/locations');
+    return (response.data || []).map(location => ({
+      id: location.id,
+      name: location.name,
+      center_lat: location.center_lat,
+      center_lng: location.center_lng,
+      radius_meters: location.radius_meters,
+      morning_shift_start: location.morning_shift_start,
+      morning_shift_end: location.morning_shift_end,
+      night_shift_start: location.night_shift_start,
+      night_shift_end: location.night_shift_end
+    }));
+  } catch (error) {
+    console.error('Error fetching areas:', error);
+    throw error;
+  }
+}

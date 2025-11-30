@@ -1,0 +1,34 @@
+# Node modules
+node_modules/
+.expo/
+
+# Build output
+android/app/build/
+ios/build/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Environment files
+.env
+.env.local
+backend/.env
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Generated files
+upload-results.json
+
+# Data files
+*.xlsx
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
