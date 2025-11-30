@@ -140,14 +140,27 @@ class ApiClient {
       
       // Provide more helpful error messages
       if (error.message === 'Network request failed' || error.message.includes('Failed to fetch')) {
-        const helpfulError = new Error(
-          `Cannot connect to backend server at ${url}\n\n` +
-          `Possible solutions:\n` +
-          `1. Make sure backend is running: cd backend && npm run dev\n` +
-          `2. Check API URL in .env: EXPO_PUBLIC_API_URL=${this.baseURL}\n` +
-          `3. For mobile devices, use your computer's IP instead of localhost\n` +
-          `4. Verify backend is accessible: http://${this.baseURL.replace('/api', '').replace('http://', '')}/health`
-        );
+        const isLocalhost = this.baseURL.includes('localhost') || this.baseURL.includes('127.0.0.1');
+        const baseUrlWithoutApi = this.baseURL.replace('/api', '').replace('http://', '').replace('https://', '');
+        
+        let errorMessage = `Cannot connect to backend server at ${url}\n\n`;
+        errorMessage += `Possible solutions:\n`;
+        errorMessage += `1. Make sure backend is running: cd backend && npm run dev\n`;
+        
+        if (isLocalhost) {
+          errorMessage += `2. ⚠️  MOBILE DEVICE DETECTED: localhost won't work on mobile!\n`;
+          errorMessage += `   Create a .env file in the project root with:\n`;
+          errorMessage += `   EXPO_PUBLIC_API_URL=http://YOUR_COMPUTER_IP:3000/api\n`;
+          errorMessage += `   Find your IP: ipconfig (Windows) or ifconfig (Mac/Linux)\n`;
+          errorMessage += `   Make sure your phone is on the same WiFi network\n`;
+        } else {
+          errorMessage += `2. Check API URL in .env: EXPO_PUBLIC_API_URL=${this.baseURL}\n`;
+        }
+        
+        errorMessage += `3. Verify backend is accessible: http://${baseUrlWithoutApi}/health\n`;
+        errorMessage += `4. Check firewall settings - port 3000 must be accessible\n`;
+        
+        const helpfulError = new Error(errorMessage);
         helpfulError.originalError = error;
         throw helpfulError;
       }

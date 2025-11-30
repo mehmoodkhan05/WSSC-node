@@ -21,14 +21,20 @@ exports.protect = async (req, res, next) => {
     try {
       // Verify token
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      
+      // Fetch user from database
+      console.log(`[DB Query] Authenticating user with ID: ${decoded.id}`);
       req.user = await User.findById(decoded.id).select('-password');
 
       if (!req.user || !req.user.isActive) {
+        console.log(`[Auth] User not found or inactive in database`);
         return res.status(401).json({
           success: false,
           error: 'User not found or inactive'
         });
       }
+      
+      console.log(`[Auth] User authenticated: ${req.user.email} (${req.user.role})`);
 
       next();
     } catch (err) {

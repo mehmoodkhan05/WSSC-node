@@ -18,16 +18,20 @@ router.post('/register', async (req, res) => {
       });
     }
 
-    // Check if user exists
+    // Check if user exists in database
+    console.log(`[DB Query] Checking if user exists with email: ${email}`);
     const existingUser = await User.findOne({ $or: [{ email }, { username: email }] });
     if (existingUser) {
+      console.log(`[DB Query] User already exists in database`);
       return res.status(400).json({
         success: false,
         error: 'User already exists'
       });
     }
 
-    // Create user
+    // Create user in database
+    console.log(`[DB Query] Creating new user in database: ${email}`);
+    const startTime = Date.now();
     const user = await User.create({
       email,
       username: email,
@@ -35,6 +39,8 @@ router.post('/register', async (req, res) => {
       fullName: fullName || '',
       role
     });
+    const createTime = Date.now() - startTime;
+    console.log(`[DB Query] User created successfully in ${createTime}ms. User ID: ${user._id}`);
 
     const token = generateToken(user._id);
 
@@ -70,11 +76,18 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    // Check for user
+    // Check for user in database
+    console.log(`[DB Query] Searching for user with email: ${email}`);
+    const startTime = Date.now();
+    
     const user = await User.findOne({ $or: [{ email }, { username: email }] })
       .select('+password');
+    
+    const queryTime = Date.now() - startTime;
+    console.log(`[DB Query] User lookup completed in ${queryTime}ms. Found: ${user ? 'Yes' : 'No'}`);
 
     if (!user || !user.isActive) {
+      console.log(`[Auth] Login failed: User not found or inactive`);
       return res.status(401).json({
         success: false,
         error: 'Invalid credentials'
@@ -82,14 +95,18 @@ router.post('/login', async (req, res) => {
     }
 
     // Check if password matches
+    console.log(`[Auth] Comparing password for user: ${user.email}`);
     const isMatch = await user.comparePassword(password);
-
+    
     if (!isMatch) {
+      console.log(`[Auth] Login failed: Password mismatch for user ${user.email}`);
       return res.status(401).json({
         success: false,
         error: 'Invalid credentials'
       });
     }
+    
+    console.log(`[Auth] Password verified successfully for user: ${user.email}`);
 
     const token = generateToken(user._id);
 
@@ -117,7 +134,18 @@ router.post('/login', async (req, res) => {
 // @access  Private
 router.get('/me', protect, async (req, res) => {
   try {
+    console.log(`[DB Query] Fetching user profile for ID: ${req.user._id}`);
     const user = await User.findById(req.user._id);
+    
+    if (!user) {
+      console.log(`[DB Query] User not found in database`);
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+    
+    console.log(`[DB Query] User profile retrieved: ${user.email}`);
 
     res.json({
       success: true,

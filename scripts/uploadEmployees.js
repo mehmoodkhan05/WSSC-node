@@ -1,15 +1,10 @@
 const XLSX = require('xlsx');
-const Parse = require('parse/node');
 const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
 
-// Initialize Parse
-Parse.initialize(
-  process.env.EXPO_PUBLIC_PARSE_APP_ID || process.env.PARSE_APP_ID,
-  process.env.EXPO_PUBLIC_PARSE_JS_KEY || process.env.PARSE_JS_KEY
-);
-Parse.serverURL = process.env.EXPO_PUBLIC_PARSE_SERVER_URL || 'https://parseapi.back4app.com/';
+// API Base URL
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || process.env.API_URL || 'http://localhost:3000/api';
 
 /**
  * Maps Excel column names to employee field names
@@ -105,7 +100,6 @@ function rowToEmployee(row, headers, columnMap) {
         }
         
         // Convert to string for text fields (including department and other string fields)
-        // These fields should always be strings in Parse, even if Excel reads them as numbers
         const stringFields = [
           'empNo', 
           'empCnic', 
@@ -180,9 +174,39 @@ function generateDefaultPassword() {
 }
 
 /**
- * Upload employee to database
+ * Make API request
  */
-async function uploadEmployee(employee, sessionToken) {
+async function apiRequest(endpoint, method = 'GET', data = null, token = null) {
+  const url = `${API_BASE_URL}${endpoint}`;
+  const options = {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  };
+
+  if (token) {
+    options.headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  if (data && (method === 'POST' || method === 'PUT')) {
+    options.body = JSON.stringify(data);
+  }
+
+  const response = await fetch(url, options);
+  const result = await response.json();
+
+  if (!response.ok) {
+    throw new Error(result.error || `Request failed with status ${response.status}`);
+  }
+
+  return result;
+}
+
+/**
+ * Upload employee to database via REST API
+ */
+async function uploadEmployee(employee, token) {
   try {
     // Generate email from name if not provided
     if (!employee.email) {
@@ -208,8 +232,8 @@ async function uploadEmployee(employee, sessionToken) {
       employee.role = 'staff'; // Default role
     }
     
-    // Call cloud function with session token
-    const result = await Parse.Cloud.run('createUserWithRole', {
+    // Call REST API to create user
+    const result = await apiRequest('/users', 'POST', {
       email: employee.email,
       password: employee.password,
       fullName: employee.fullName || employee.email,
@@ -225,9 +249,7 @@ async function uploadEmployee(employee, sessionToken) {
       empFlg: employee.empFlg || null,
       empMarried: employee.empMarried || null,
       empGender: employee.empGender || null,
-    }, {
-      sessionToken: sessionToken
-    });
+    }, token);
     
     return { success: true, result, error: null };
   } catch (error) {
@@ -242,6 +264,7 @@ async function uploadEmployeesFromExcel(excelFilePath, adminEmail, adminPassword
   try {
     console.log('Starting employee upload process...');
     console.log(`Reading Excel file: ${excelFilePath}`);
+    console.log(`API Base URL: ${API_BASE_URL}`);
     
     // Read Excel file
     const { headers, rows } = readExcelFile(excelFilePath);
@@ -265,11 +288,18 @@ async function uploadEmployeesFromExcel(excelFilePath, adminEmail, adminPassword
     
     // Authenticate as admin
     console.log('\nAuthenticating as admin...');
-    let currentUser;
-    let sessionToken;
+    let token;
     try {
-      currentUser = await Parse.User.logIn(adminEmail, adminPassword);
-      sessionToken = currentUser.getSessionToken();
+      const loginResult = await apiRequest('/auth/login', 'POST', {
+        email: adminEmail,
+        password: adminPassword
+      });
+      
+      if (!loginResult.success || !loginResult.token) {
+        throw new Error('Login failed: Invalid response');
+      }
+      
+      token = loginResult.token;
       console.log('✓ Successfully authenticated');
     } catch (error) {
       throw new Error(`Authentication failed: ${error.message}. Please check your admin credentials.`);
@@ -354,13 +384,13 @@ async function uploadEmployeesFromExcel(excelFilePath, adminEmail, adminPassword
       console.log(`\nRow ${rowNum}: Processing ${employee.email}...`);
       
       // Upload employee with session token
-      let uploadResult = await uploadEmployee(employee, sessionToken);
+      let uploadResult = await uploadEmployee(employee, token);
       
       // If email already exists in database, try to make it unique and retry
       if (!uploadResult.success && uploadResult.error && 
           (uploadResult.error.includes('already exists') || 
            uploadResult.error.includes('Account already exists') ||
-           uploadResult.error.includes('username') && uploadResult.error.includes('already'))) {
+           uploadResult.error.includes('User already exists'))) {
         
         console.log(`  Email ${employee.email} already exists in database, generating unique email...`);
         
@@ -371,7 +401,7 @@ async function uploadEmployeesFromExcel(excelFilePath, adminEmail, adminPassword
             employee.email = uniqueEmail;
             usedEmails.add(uniqueEmail);
             console.log(`  Retrying with unique email: ${employee.email}`);
-            uploadResult = await uploadEmployee(employee, sessionToken);
+            uploadResult = await uploadEmployee(employee, token);
           }
         }
         
@@ -381,13 +411,14 @@ async function uploadEmployeesFromExcel(excelFilePath, adminEmail, adminPassword
           let retryEmail = employee.email;
           while (uploadResult.error && 
                  (uploadResult.error.includes('already exists') || 
-                  uploadResult.error.includes('Account already exists'))) {
+                  uploadResult.error.includes('Account already exists') ||
+                  uploadResult.error.includes('User already exists'))) {
             retryEmail = generateEmailFromName(employee.fullName, counter);
             if (!usedEmails.has(retryEmail)) {
               employee.email = retryEmail;
               usedEmails.add(retryEmail);
               console.log(`  Retrying with unique email: ${employee.email}`);
-              uploadResult = await uploadEmployee(employee, sessionToken);
+              uploadResult = await uploadEmployee(employee, token);
             }
             counter++;
             if (counter > 100) break; // Safety limit
@@ -400,7 +431,7 @@ async function uploadEmployeesFromExcel(excelFilePath, adminEmail, adminPassword
         results.successful.push({
           row: rowNum,
           email: employee.email,
-          userId: uploadResult.result?.user_id,
+          userId: uploadResult.result?.data?.user_id || uploadResult.result?.user_id,
           password: employee.password,
         });
       } else {
@@ -444,9 +475,6 @@ async function uploadEmployeesFromExcel(excelFilePath, adminEmail, adminPassword
     fs.writeFileSync(resultsFile, JSON.stringify(results, null, 2));
     console.log(`\nDetailed results saved to: ${resultsFile}`);
     
-    // Logout
-    await Parse.User.logOut();
-    
     return results;
   } catch (error) {
     console.error('\n✗ Error:', error.message);
@@ -462,6 +490,8 @@ if (require.main === module) {
     console.log('Usage: node uploadEmployees.js <excel-file-path> <admin-email> <admin-password>');
     console.log('\nExample:');
     console.log('  node uploadEmployees.js employees.xlsx admin@example.com password123');
+    console.log('\nEnvironment variables:');
+    console.log('  EXPO_PUBLIC_API_URL or API_URL - API base URL (default: http://localhost:3000/api)');
     process.exit(1);
   }
   
@@ -487,4 +517,3 @@ if (require.main === module) {
 }
 
 module.exports = { uploadEmployeesFromExcel };
-

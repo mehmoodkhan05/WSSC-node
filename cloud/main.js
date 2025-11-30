@@ -1,5 +1,23 @@
+/**
+ * DEPRECATED: This file is no longer used.
+ * 
+ * This file contains Parse/Back4App cloud code that has been replaced
+ * with Node.js/Express REST API endpoints.
+ * 
+ * All cloud functions have been migrated to backend routes:
+ * - fetchAllProfiles -> GET /api/users
+ * - fetchStaff -> GET /api/users/staff
+ * - fetchSupervisors -> GET /api/users/supervisors
+ * - deleteUser -> DELETE /api/users/:id
+ * - And all other functions have corresponding REST endpoints
+ * 
+ * This file is kept for reference only.
+ */
+
 // Push notification cloud functions were intentionally removed.
 
+// DEPRECATED - DO NOT USE
+// All Parse cloud functions have been migrated to REST API
 Parse.Cloud.define('fetchAllProfiles', async (request) => {
   try {
     const query = new Parse.Query(Parse.User);

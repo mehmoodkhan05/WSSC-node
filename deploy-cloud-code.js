@@ -1,56 +1,18 @@
-const Parse = require('parse/node');
-require('dotenv').config();
+/**
+ * DEPRECATED: This file is no longer used.
+ * 
+ * This script was used to deploy Parse/Back4App cloud code.
+ * The application has been migrated to a Node.js/Express backend.
+ * 
+ * Cloud code functionality has been replaced with REST API endpoints:
+ * - Backend routes are in backend/routes/
+ * - Frontend uses apiClient from src/lib/apiClient.js
+ * 
+ * This file is kept for reference only and should not be executed.
+ */
 
-if (!process.env.EXPO_PUBLIC_PARSE_APP_ID || !process.env.EXPO_PUBLIC_PARSE_JS_KEY) {
-  console.error('Error: EXPO_PUBLIC_PARSE_APP_ID and EXPO_PUBLIC_PARSE_JS_KEY must be set in environment variables');
-  process.exit(1);
-}
-
-Parse.initialize(
-  process.env.EXPO_PUBLIC_PARSE_APP_ID,
-  process.env.EXPO_PUBLIC_PARSE_JS_KEY
-);
-Parse.serverURL = process.env.EXPO_PUBLIC_PARSE_SERVER_URL || 'https://parseapi.back4app.com/';
-
-const fs = require('fs');
-const path = require('path');
-
-async function deployCloudCode() {
-  try {
-    if (!process.env.PARSE_MASTER_KEY) {
-      console.error('Error: PARSE_MASTER_KEY must be set in environment variables');
-      process.exit(1);
-    }
-
-    console.log('Starting cloud code deployment...');
-
-    const cloudCodePath = path.join(__dirname, 'cloud', 'main.js');
-    const cloudCode = fs.readFileSync(cloudCodePath, 'utf8');
-
-    const response = await fetch(`${Parse.serverURL}/functions/deploy`, {
-      method: 'POST',
-      headers: {
-        'X-Parse-Application-Id': Parse.applicationId,
-        'X-Parse-Master-Key': process.env.PARSE_MASTER_KEY,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        code: cloudCode,
-        functions: ['fetchAllProfiles', 'fetchStaff', 'fetchSupervisors', 'deleteUser', 'deleteLocation', 'getDashboardStats', 'fetchTodayAttendance', 'fetchTodayLeaveRequests', 'createStaffAssignment', 'createSupervisorLocation', 'fetchSupervisorLocations', 'fetchAssignments', 'fetchLeaveRequests', 'updateLeaveRequestStatus', 'clockIn', 'clockOut', 'fetchPendingApprovals', 'approveAttendance', 'rejectAttendance', 'fetchPerformanceReviews', 'generatePerformancePDF', 'updatePerformanceReviewPDF']
-      })
-    });
-
-    if (!response.ok) {
-      throw new Error(`Deployment failed: ${response.statusText}`);
-    }
-
-    const result = await response.json();
-    console.log('Cloud code deployed successfully:', result);
-
-  } catch (error) {
-    console.error('Error deploying cloud code:', error);
-    process.exit(1);
-  }
-}
-
-deployCloudCode();
+console.error('ERROR: This script is deprecated and no longer functional.');
+console.error('The application has been migrated from Parse/Back4App to Node.js/Express.');
+console.error('All functionality is now available via REST API endpoints.');
+console.error('See backend/routes/ for available endpoints.');
+process.exit(1);

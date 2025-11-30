@@ -21,10 +21,17 @@ router.get('/', protect, async (req, res) => {
       query.isActive = true;
     }
 
+    // Log database query for debugging
+    console.log(`[DB Query] Fetching users from database with query:`, JSON.stringify(query));
+    const startTime = Date.now();
+    
     const users = await User.find(query)
       .sort({ createdAt: 1 })
       .limit(1000)
       .select('-password');
+    
+    const queryTime = Date.now() - startTime;
+    console.log(`[DB Query] Found ${users.length} users in ${queryTime}ms`);
 
     const formattedUsers = users.map(user => ({
       user_id: user._id,

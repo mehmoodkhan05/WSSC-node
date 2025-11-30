@@ -33,25 +33,7 @@ if %errorlevel% neq 0 (
 )
 
 echo.
-echo Checking if port 3000 is available...
-netstat -ano | findstr :3000 >nul 2>&1
-if %errorlevel% equ 0 (
-    echo ⚠️  Port 3000 is already in use!
-    echo.
-    echo    Finding process using port 3000...
-    for /f "tokens=5" %%a in ('netstat -ano ^| findstr :3000 ^| findstr LISTENING') do (
-        echo    Process ID (PID): %%a
-        echo    To kill this process, run: taskkill /PID %%a /F
-        echo    Or change PORT in backend/.env file to use a different port.
-        echo.
-    )
-    echo    Continuing anyway - the server will show an error if port is still in use...
-    echo.
-) else (
-    echo ✅ Port 3000 is available.
-)
-
-echo.
 echo Starting backend server...
+echo    (Server will automatically find an available port if 3000 is in use)
 echo.
 npm run dev

@@ -1,0 +1,18 @@
+{
+  "totalRows": 914,
+  "processed": 914,
+  "skipped": 0,
+  "generated": "2025-11-30T10:33:32.466Z",
+  "files": {
+    "mongoScript": "mongodb-import\\users-insert-upsert.mongodb.js"
+  },
+  "instructions": {
+    "mongoShell": [
+      "1. Open MongoDB Compass",
+      "2. Click \"MongoSH\" tab",
+      "3. Copy and paste the contents of users-insert-upsert.mongodb.js",
+      "4. This will UPDATE existing users or INSERT new ones",
+      "5. No duplicate errors will occur"
+    ]
+  }
+}

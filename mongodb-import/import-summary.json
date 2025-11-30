@@ -1,0 +1,27 @@
+{
+  "totalRows": 914,
+  "processed": 914,
+  "skipped": 0,
+  "generated": "2025-11-30T10:27:23.797Z",
+  "files": {
+    "jsonArray": "C:\\Users\\sc\\Desktop\\Work\\WSSC\\WSSC-App\\mongodb-import\\users.json",
+    "mongoScript": "C:\\Users\\sc\\Desktop\\Work\\WSSC\\WSSC-App\\mongodb-import\\users-insert.mongodb.js",
+    "individualFiles": "C:\\Users\\sc\\Desktop\\Work\\WSSC\\WSSC-App\\mongodb-import\\users-individual"
+  },
+  "instructions": {
+    "mongoDBCompass": [
+      "1. Open MongoDB Compass",
+      "2. Connect to your database (wssc-db)",
+      "3. Select the \"users\" collection",
+      "4. Click \"Add Data\" > \"Import File\"",
+      "5. Select users.json",
+      "6. Click \"Import\""
+    ],
+    "mongoShell": [
+      "1. Open MongoDB Compass",
+      "2. Click \"MongoSH\" tab",
+      "3. Copy and paste the contents of users-insert.mongodb.js",
+      "4. Or run: mongosh <connection-string> < users-insert.mongodb.js"
+    ]
+  }
+}
