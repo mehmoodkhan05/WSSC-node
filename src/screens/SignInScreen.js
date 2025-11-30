@@ -11,6 +11,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Toast from 'react-native-toast-message';
 import { signInWithEmail } from '../lib/auth';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -30,12 +31,33 @@ const SignInScreen = () => {
     try {
       const result = await signInWithEmail(email, password);
       if (result.error) {
-        Alert.alert('Error', result.error);
+        // Check if it's a network error
+        if (result.error.includes('Cannot connect to backend') || result.error.includes('Network request failed')) {
+          // Show both Alert and Toast for network errors
+          Alert.alert('Error', result.error);
+          Toast.show({
+            type: 'error',
+            text1: 'API request error',
+            text2: 'TypeError: Network request failed',
+            visibilityTime: 5000,
+          });
+        } else {
+          Alert.alert('Error', result.error);
+        }
       } else {
         await refreshProfile();
       }
     } catch (error) {
-      Alert.alert('Error', 'Failed to sign in');
+      const errorMessage = error.message || 'Failed to sign in';
+      Alert.alert('Error', errorMessage);
+      if (errorMessage.includes('Network request failed') || errorMessage.includes('Failed to fetch')) {
+        Toast.show({
+          type: 'error',
+          text1: 'API request error',
+          text2: 'TypeError: Network request failed',
+          visibilityTime: 5000,
+        });
+      }
     } finally {
       setLoading(false);
     }

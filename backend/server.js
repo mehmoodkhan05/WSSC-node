@@ -291,7 +291,7 @@ const startServer = async () => {
       }
     }
     
-    const server = app.listen(serverPort, () => {
+    const server = app.listen(serverPort, '0.0.0.0', () => {
       const actualPort = server.address().port;
       serverPort = actualPort;
       console.log(`✅ Server running on port ${actualPort} in ${process.env.NODE_ENV || 'development'} mode`);
