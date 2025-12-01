@@ -11,9 +11,16 @@ router.get('/', protect, async (req, res) => {
     const { staffId, supervisorId, date } = req.query;
 
     const query = {};
-    if (staffId) query.staffId = staffId;
-    if (supervisorId) query.supervisorId = supervisorId;
-    if (date) query.date = date;
+    // Only add to query if valid value (not undefined, null, or 'undefined' string)
+    if (staffId && staffId !== 'undefined' && staffId !== 'null') {
+      query.staffId = staffId;
+    }
+    if (supervisorId && supervisorId !== 'undefined' && supervisorId !== 'null') {
+      query.supervisorId = supervisorId;
+    }
+    if (date && date !== 'undefined' && date !== 'null') {
+      query.date = date;
+    }
 
     const reviews = await PerformanceReview.find(query)
       .populate('staffId', 'fullName username email')

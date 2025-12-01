@@ -97,6 +97,25 @@ export async function updateCurrentUserProfile(updates) {
   }
 }
 
+// Check if user can be deleted (no child data)
+export async function checkUserCanDelete(userId) {
+  try {
+    const response = await apiClient.get(`/users/${userId}/can-delete`);
+    return {
+      canDelete: response.canDelete,
+      hasStaffAssignments: response.hasStaffAssignments,
+      hasAttendance: response.hasAttendance,
+      hasSupervisorMappings: response.hasSupervisorMappings,
+      hasLeaveRequests: response.hasLeaveRequests,
+      reason: response.reason
+    };
+  } catch (error) {
+    console.error('Error checking user deletability:', error);
+    // Default to not allowing delete on error
+    return { canDelete: false, reason: 'Unable to verify deletion status' };
+  }
+}
+
 // Delete user
 export async function deleteUser(userId) {
   try {
@@ -104,6 +123,10 @@ export async function deleteUser(userId) {
     return { success: true };
   } catch (error) {
     console.error('Error deleting user:', error);
+    // Check if error is due to having children
+    if (error.response?.data?.hasChildren) {
+      throw new Error(error.response.data.error || 'Cannot delete user with associated data');
+    }
     throw new Error(error.message || 'Failed to delete user');
   }
 }

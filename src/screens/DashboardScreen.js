@@ -483,7 +483,7 @@ const departmentEffectInitialisedRef = useRef(false);
       });
 
       // 3. Prepare data maps for efficient lookup.
-      const locationNameMap = new Map(locations.map(l => [l.id, l.get('name')]));
+      const locationNameMap = new Map(locations.map(l => [l.id, l.name]));
       // decoratedAssignments is already an array of objects from cloud function
       const assignmentMap = new Map(filteredAssignments.map(a => {
         const staffId = a.staff_id;

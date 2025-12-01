@@ -4,12 +4,14 @@ import { PARSE_CLASSES } from './apiClient';
 // Fetch leave requests
 export async function fetchLeaveRequests(filters = {}) {
   try {
-    const response = await apiClient.get('/leave', {
-      staffId: filters.staffId || undefined,
-      status: filters.status || undefined,
-      dateFrom: filters.dateFrom || undefined,
-      dateTo: filters.dateTo || undefined
-    });
+    // Build query params, only include defined values
+    const params = {};
+    if (filters.staffId) params.staffId = filters.staffId;
+    if (filters.status) params.status = filters.status;
+    if (filters.dateFrom) params.dateFrom = filters.dateFrom;
+    if (filters.dateTo) params.dateTo = filters.dateTo;
+    
+    const response = await apiClient.get('/leave', params);
 
     return (response.data || []).map(request => ({
       id: request.id,

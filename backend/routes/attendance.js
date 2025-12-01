@@ -198,6 +198,9 @@ router.post('/clock-in', protect, async (req, res) => {
     const isLate = clockInMinutes > (workStartMinutes + systemConfig.gracePeriodMinutes);
 
     // Create attendance record
+    // clockedInBy should be set when someone else clocks in on behalf of staff
+    const clockedByOther = !isSelfAction;
+    
     const attendance = await Attendance.create({
       staffId: staff_id,
       supervisorId: supervisor_id,
@@ -211,15 +214,14 @@ router.post('/clock-in', protect, async (req, res) => {
       clockInLat: lat || null,
       clockInLng: lng || null,
       clockInPhotoUrl: clock_in_photo_url || null,
-      clockedInBy: overrideMode || (!isSelfAction && isGeneralManager) ? currentUser._id : staff_id,
-      isOverride: overrideMode || (!isSelfAction && isGeneralManager)
+      clockedInBy: clockedByOther ? currentUser._id : null,
+      isOverride: overrideMode
     });
 
-    // Get clocked by name if different
+    // Get clocked by name if someone else clocked them in
     let clockedByName = null;
-    if (attendance.clockedInBy?.toString() !== staff_id) {
-      const clockedByUser = await User.findById(attendance.clockedInBy);
-      clockedByName = clockedByUser ? (clockedByUser.fullName || clockedByUser.username || 'Unknown') : null;
+    if (clockedByOther && attendance.clockedInBy) {
+      clockedByName = currentUser.fullName || currentUser.username || 'Unknown';
     }
 
     res.json({
@@ -370,21 +372,23 @@ router.post('/clock-out', protect, async (req, res) => {
     }
 
     // Update clock out
+    // clockedOutBy should be set when someone else clocks out on behalf of staff
+    const clockedOutByOther = !isSelfAction;
+    
     attendance.clockOut = new Date();
     attendance.clockOutLat = lat || null;
     attendance.clockOutLng = lng || null;
     attendance.clockOutPhotoUrl = clock_out_photo_url || null;
-    attendance.clockedOutBy = overrideMode || (!isSelfAction && isGeneralManager) ? currentUser._id : staff_id;
-    if (!attendance.isOverride) {
-      attendance.isOverride = overrideMode || (!isSelfAction && isGeneralManager);
+    attendance.clockedOutBy = clockedOutByOther ? currentUser._id : null;
+    if (!attendance.isOverride && overrideMode) {
+      attendance.isOverride = true;
     }
     await attendance.save();
 
-    // Get clocked by name
+    // Get clocked by name if someone else clocked them out
     let clockedOutByName = null;
-    if (attendance.clockedOutBy?.toString() !== staff_id) {
-      const clockedOutByUser = await User.findById(attendance.clockedOutBy);
-      clockedOutByName = clockedOutByUser ? (clockedOutByUser.fullName || clockedOutByUser.username || 'Unknown') : null;
+    if (clockedOutByOther) {
+      clockedOutByName = currentUser.fullName || currentUser.username || 'Unknown';
     }
 
     res.json({
@@ -440,8 +444,8 @@ router.get('/today', protect, async (req, res) => {
       approvalStatus: att.approvalStatus || 'pending',
       overtime: att.overtime || false,
       doubleDuty: att.doubleDuty || false,
-      clockedInBy: att.clockedInBy?._id?.toString() || null,
-      clockedOutBy: att.clockedOutBy?._id?.toString() || null,
+      clockedInBy: att.clockedInBy ? (att.clockedInBy.fullName || att.clockedInBy.username || null) : null,
+      clockedOutBy: att.clockedOutBy ? (att.clockedOutBy.fullName || att.clockedOutBy.username || null) : null,
       isOverride: att.isOverride || false
     }));
 
@@ -464,7 +468,11 @@ router.get('/report', protect, async (req, res) => {
   try {
     const { dateFrom, dateTo, supervisorId, areaId, status = 'all' } = req.query;
 
-    if (!dateFrom || !dateTo) {
+    // Validate required fields (filter out 'undefined' and 'null' strings)
+    const validDateFrom = dateFrom && dateFrom !== 'undefined' && dateFrom !== 'null' ? dateFrom : null;
+    const validDateTo = dateTo && dateTo !== 'undefined' && dateTo !== 'null' ? dateTo : null;
+
+    if (!validDateFrom || !validDateTo) {
       return res.status(400).json({
         success: false,
         error: 'dateFrom and dateTo are required'
@@ -472,18 +480,19 @@ router.get('/report', protect, async (req, res) => {
     }
 
     const query = {
-      attendanceDate: { $gte: dateFrom, $lte: dateTo }
+      attendanceDate: { $gte: validDateFrom, $lte: validDateTo }
     };
 
-    if (supervisorId) {
+    // Only add to query if valid value (not undefined, null, or string versions)
+    if (supervisorId && supervisorId !== 'undefined' && supervisorId !== 'null') {
       query.supervisorId = supervisorId;
     }
 
-    if (areaId) {
+    if (areaId && areaId !== 'undefined' && areaId !== 'null') {
       query.ncLocationId = areaId;
     }
 
-    if (status !== 'all') {
+    if (status && status !== 'all' && status !== 'undefined' && status !== 'null') {
       query.status = status;
     }
 

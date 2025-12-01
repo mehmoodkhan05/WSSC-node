@@ -401,7 +401,10 @@ const AdminDashboard = ({ stats, records, roleDepartmentStats = {} }) => {
       </View>
 
       <View style={styles.rightColumn}>
-        <AttendanceTable records={records} title="Today's Activity" />
+        <AttendanceTable 
+          records={records} 
+          title="Today's Activity" 
+        />
         
         {/* Leadership Attendance - Only visible to CEO/Super Admin */}
         {isCEOOrSuperAdmin && (

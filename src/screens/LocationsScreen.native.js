@@ -29,10 +29,10 @@ export default function Locations() {
     center_lat: '40.7128',
     center_lng: '-74.0060',
     radius_meters: '500',
-    morning_shift_start: '09:00',
-    morning_shift_end: '17:00',
-    night_shift_start: '22:00',
-    night_shift_end: '06:00',
+    morning_shift_start: '08:00',
+    morning_shift_end: '20:00',
+    night_shift_start: '20:00',
+    night_shift_end: '08:00',
   });
   const [isOpen, setIsOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -50,10 +50,10 @@ export default function Locations() {
       center_lat: '40.7128',
       center_lng: '-74.0060',
       radius_meters: '500',
-      morning_shift_start: '09:00',
-      morning_shift_end: '17:00',
-      night_shift_start: '22:00',
-      night_shift_end: '06:00',
+      morning_shift_start: '08:00',
+      morning_shift_end: '20:00',
+      night_shift_start: '20:00',
+      night_shift_end: '08:00',
     });
     setEditingId(null);
     setInitialRegion(DEFAULT_REGION);
@@ -552,7 +552,7 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   dialogContent: {
-    maxHeight: '90%',
+    // maxHeight: '90%',
     paddingBottom: 0,
     paddingHorizontal: 0,
   },

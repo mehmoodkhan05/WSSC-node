@@ -155,7 +155,7 @@ router.get('/supervisor-locations', protect, async (req, res) => {
 // @route   POST /api/assignments/supervisor-locations
 // @desc    Assign supervisor to location
 // @access  Private/Admin
-router.post('/supervisor-locations', protect, authorize('ceo', 'super_admin', 'general_manager'), async (req, res) => {
+router.post('/supervisor-locations', protect, authorize('ceo', 'super_admin', 'general_manager', 'manager'), async (req, res) => {
   try {
     const { supervisor_id, nc_location_id } = req.body;
 
@@ -202,7 +202,7 @@ router.post('/supervisor-locations', protect, authorize('ceo', 'super_admin', 'g
 // @route   DELETE /api/assignments/supervisor-locations/:id
 // @desc    Remove supervisor from location
 // @access  Private/Admin
-router.delete('/supervisor-locations/:id', protect, authorize('ceo', 'super_admin', 'general_manager'), async (req, res) => {
+router.delete('/supervisor-locations/:id', protect, authorize('ceo', 'super_admin', 'general_manager', 'manager'), async (req, res) => {
   try {
     const supLoc = await SupervisorLocation.findByIdAndDelete(req.params.id);
 

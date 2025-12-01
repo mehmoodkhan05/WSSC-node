@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Platform, TextInput } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 
-const AttendanceTable = ({ records, title, pageSize = 10 }) => {
+const AttendanceTable = ({ records, title, pageSize = 10, selectedDepartment = 'all' }) => {
   const [expandedTabs, setExpandedTabs] = useState(new Set()); // Track which tabs are expanded
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPages, setCurrentPages] = useState({
@@ -12,13 +12,20 @@ const AttendanceTable = ({ records, title, pageSize = 10 }) => {
     'on-leave': 1,
   }); // Track current page per tab
 
+  // Filter records by department first
+  const departmentFilteredRecords = useMemo(() => {
+    if (!records || records.length === 0) return [];
+    if (selectedDepartment === 'all') return records;
+    return records.filter(record => record.department === selectedDepartment);
+  }, [records, selectedDepartment]);
+
   // Get records for a specific tab
   const getRecordsForTab = (tab) => {
-    if (!records || records.length === 0) return [];
+    if (!departmentFilteredRecords || departmentFilteredRecords.length === 0) return [];
     
-    let tabFiltered = records;
+    let tabFiltered = departmentFilteredRecords;
     if (tab !== 'all') {
-      tabFiltered = records.filter(record => {
+      tabFiltered = departmentFilteredRecords.filter(record => {
         const status = (record.status || '').toLowerCase();
         if (tab === 'present') {
           return status === 'present' || status === 'late';
@@ -40,24 +47,24 @@ const AttendanceTable = ({ records, title, pageSize = 10 }) => {
     });
   };
 
-  // Count records by status for tabs
+  // Count records by status for tabs (using department filtered records)
   const presentCount = useMemo(() => {
-    if (!records) return 0;
-    return records.filter(r => {
+    if (!departmentFilteredRecords) return 0;
+    return departmentFilteredRecords.filter(r => {
       const status = (r.status || '').toLowerCase();
       return status === 'present' || status === 'late';
     }).length;
-  }, [records]);
+  }, [departmentFilteredRecords]);
 
   const absentCount = useMemo(() => {
-    if (!records) return 0;
-    return records.filter(r => (r.status || '').toLowerCase() === 'absent').length;
-  }, [records]);
+    if (!departmentFilteredRecords) return 0;
+    return departmentFilteredRecords.filter(r => (r.status || '').toLowerCase() === 'absent').length;
+  }, [departmentFilteredRecords]);
 
   const onLeaveCount = useMemo(() => {
-    if (!records) return 0;
-    return records.filter(r => (r.status || '').toLowerCase() === 'on-leave').length;
-  }, [records]);
+    if (!departmentFilteredRecords) return 0;
+    return departmentFilteredRecords.filter(r => (r.status || '').toLowerCase() === 'on-leave').length;
+  }, [departmentFilteredRecords]);
 
   const toggleTab = (tab) => {
     setExpandedTabs(prev => {
@@ -116,7 +123,7 @@ const AttendanceTable = ({ records, title, pageSize = 10 }) => {
   };
 
   const tabOptions = [
-    { value: 'all', label: 'All', count: records?.length || 0 },
+    { value: 'all', label: 'All', count: departmentFilteredRecords?.length || 0 },
     { value: 'present', label: 'Present', count: presentCount },
     { value: 'absent', label: 'Absent', count: absentCount },
     { value: 'on-leave', label: 'On Leave', count: onLeaveCount },

@@ -98,6 +98,23 @@ export async function updateLocation(locationId, locationData) {
   }
 }
 
+// Check if a location can be deleted (no active assignments)
+export async function checkLocationCanDelete(locationId) {
+  try {
+    const response = await apiClient.get(`/locations/${locationId}/can-delete`);
+    return {
+      canDelete: response.canDelete,
+      hasAssignments: response.hasAssignments,
+      hasSupervisorMappings: response.hasSupervisorMappings,
+      reason: response.reason
+    };
+  } catch (error) {
+    console.error('Error checking location deletability:', error);
+    // Default to not allowing delete on error
+    return { canDelete: false, reason: 'Unable to verify deletion status' };
+  }
+}
+
 // Delete a location
 export async function deleteLocation(locationId) {
   try {
@@ -107,6 +124,10 @@ export async function deleteLocation(locationId) {
     return { success: true, message: 'Location deleted successfully' };
   } catch (error) {
     console.error('Error deleting location:', error);
+    // Check if error is due to having children
+    if (error.response?.data?.hasChildren) {
+      throw new Error(error.response.data.error || 'Cannot delete location with active assignments');
+    }
     throw error;
   }
 }

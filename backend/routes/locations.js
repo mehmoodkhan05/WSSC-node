@@ -87,11 +87,83 @@ router.put('/:id', protect, authorize('ceo', 'super_admin', 'general_manager'), 
   }
 });
 
+// @route   GET /api/locations/:id/can-delete
+// @desc    Check if location can be deleted (no active assignments)
+// @access  Private
+router.get('/:id/can-delete', protect, async (req, res) => {
+  try {
+    const StaffAssignment = require('../models/StaffAssignment');
+    const SupervisorLocation = require('../models/SupervisorLocation');
+    
+    const hasAssignments = await StaffAssignment.exists({ 
+      ncLocationId: req.params.id, 
+      isActive: true 
+    });
+    
+    const hasSupervisorMappings = await SupervisorLocation.exists({ 
+      ncLocationId: req.params.id 
+    });
+    
+    const canDelete = !hasAssignments && !hasSupervisorMappings;
+    let reason = null;
+    
+    if (hasAssignments && hasSupervisorMappings) {
+      reason = 'Location has active staff assignments and supervisor mappings';
+    } else if (hasAssignments) {
+      reason = 'Location has active staff assignments';
+    } else if (hasSupervisorMappings) {
+      reason = 'Location has supervisor mappings';
+    }
+    
+    res.json({ 
+      success: true, 
+      canDelete,
+      hasAssignments: !!hasAssignments,
+      hasSupervisorMappings: !!hasSupervisorMappings,
+      reason
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // @route   DELETE /api/locations/:id
-// @desc    Delete location
+// @desc    Delete location (only if no active assignments or supervisor mappings)
 // @access  Private/Admin
 router.delete('/:id', protect, authorize('ceo', 'super_admin'), async (req, res) => {
   try {
+    const StaffAssignment = require('../models/StaffAssignment');
+    const SupervisorLocation = require('../models/SupervisorLocation');
+    
+    // Check for active assignments
+    const hasAssignments = await StaffAssignment.exists({ 
+      ncLocationId: req.params.id, 
+      isActive: true 
+    });
+    
+    const hasSupervisorMappings = await SupervisorLocation.exists({ 
+      ncLocationId: req.params.id 
+    });
+    
+    if (hasAssignments || hasSupervisorMappings) {
+      let reason = 'Cannot delete location with ';
+      if (hasAssignments && hasSupervisorMappings) {
+        reason += 'active staff assignments and supervisor mappings';
+      } else if (hasAssignments) {
+        reason += 'active staff assignments';
+      } else {
+        reason += 'supervisor mappings';
+      }
+      
+      return res.status(400).json({
+        success: false,
+        error: reason,
+        hasChildren: true,
+        hasAssignments: !!hasAssignments,
+        hasSupervisorMappings: !!hasSupervisorMappings
+      });
+    }
+
     const location = await Location.findByIdAndDelete(req.params.id);
 
     if (!location) {

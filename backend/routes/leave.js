@@ -12,17 +12,22 @@ router.get('/', protect, async (req, res) => {
     const { staffId, status, dateFrom, dateTo } = req.query;
 
     const query = {};
-    if (staffId) query.staffId = staffId;
-    if (status) query.status = status;
+    // Only add staffId to query if it's a valid value (not undefined, null, or 'undefined' string)
+    if (staffId && staffId !== 'undefined' && staffId !== 'null') {
+      query.staffId = staffId;
+    }
+    if (status && status !== 'undefined' && status !== 'null') {
+      query.status = status;
+    }
     if (dateFrom || dateTo) {
       query.startDate = {};
-      if (dateFrom) query.startDate.$gte = dateFrom;
-      if (dateTo) query.startDate.$lte = dateTo;
+      if (dateFrom && dateFrom !== 'undefined') query.startDate.$gte = dateFrom;
+      if (dateTo && dateTo !== 'undefined') query.startDate.$lte = dateTo;
     }
 
     const requests = await LeaveRequest.find(query)
-      .populate('staffId', 'fullName username email')
-      .populate('supervisorId', 'fullName username')
+      .populate('staffId', 'fullName username email department role managerId generalManagerId')
+      .populate('supervisorId', 'fullName username managerId')
       .populate('approvedBy', 'fullName username')
       .sort({ createdAt: -1 });
 
@@ -30,8 +35,13 @@ router.get('/', protect, async (req, res) => {
       id: req._id,
       staff_id: req.staffId?._id?.toString(),
       staff_name: req.staffId?.fullName || req.staffId?.username || 'Unknown Staff',
+      staff_department: req.staffId?.department || null,
+      staff_role: req.staffId?.role || null,
+      staff_manager_id: req.staffId?.managerId?.toString() || null,
+      staff_gm_id: req.staffId?.generalManagerId?.toString() || null,
       supervisor_id: req.supervisorId?._id?.toString() || null,
       supervisor_name: req.supervisorId?.fullName || req.supervisorId?.username || null,
+      supervisor_manager_id: req.supervisorId?.managerId?.toString() || null,
       leave_type: req.leaveType,
       start_date: req.startDate,
       end_date: req.endDate,

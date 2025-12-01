@@ -201,52 +201,10 @@ router.get('/status/:staffId?', protect, async (req, res) => {
   }
 });
 
-// @route   GET /api/live-tracking/:staffId
-// @desc    Get live tracking data for a staff member
-// @access  Private
-router.get('/:staffId', protect, async (req, res) => {
-  try {
-    const { staffId } = req.params;
-    const { date } = req.query;
-    const queryDate = date || new Date().toISOString().split('T')[0];
-
-    const tracking = await LiveTracking.findOne({
-      staffId,
-      date: queryDate
-    }).populate('staffId', 'fullName username email');
-
-    if (!tracking) {
-      return res.json({
-        success: true,
-        data: null
-      });
-    }
-
-    res.json({
-      success: true,
-      data: {
-        id: tracking._id,
-        staffId: tracking.staffId._id.toString(),
-        staffName: tracking.staffId.fullName || tracking.staffId.username || 'Unknown',
-        date: tracking.date,
-        isActive: tracking.isActive,
-        startTime: tracking.startTime,
-        endTime: tracking.updatedAt,
-        lastUpdate: tracking.lastUpdate,
-        locations: tracking.locations || []
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
 // @route   GET /api/live-tracking/active
 // @desc    Get active live locations
 // @access  Private
+// NOTE: This route MUST be defined BEFORE /:staffId to avoid "active" being treated as staffId
 router.get('/active', protect, async (req, res) => {
   try {
     const todayStr = new Date().toISOString().split('T')[0];
@@ -278,6 +236,57 @@ router.get('/active', protect, async (req, res) => {
     res.json({
       success: true,
       data: formatted
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// @route   GET /api/live-tracking/:staffId
+// @desc    Get live tracking data for a staff member
+// @access  Private
+router.get('/:staffId', protect, async (req, res) => {
+  try {
+    const { staffId } = req.params;
+    const { date } = req.query;
+    const queryDate = date || new Date().toISOString().split('T')[0];
+
+    // Validate staffId is a valid ObjectId format
+    if (!staffId || staffId === 'undefined' || staffId === 'null') {
+      return res.status(400).json({
+        success: false,
+        error: 'Valid staffId is required'
+      });
+    }
+
+    const tracking = await LiveTracking.findOne({
+      staffId,
+      date: queryDate
+    }).populate('staffId', 'fullName username email');
+
+    if (!tracking) {
+      return res.json({
+        success: true,
+        data: null
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        id: tracking._id,
+        staffId: tracking.staffId._id.toString(),
+        staffName: tracking.staffId.fullName || tracking.staffId.username || 'Unknown',
+        date: tracking.date,
+        isActive: tracking.isActive,
+        startTime: tracking.startTime,
+        endTime: tracking.updatedAt,
+        lastUpdate: tracking.lastUpdate,
+        locations: tracking.locations || []
+      }
     });
   } catch (error) {
     res.status(500).json({

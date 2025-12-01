@@ -83,6 +83,36 @@ const attendanceSchema = new mongoose.Schema({
   isOverride: {
     type: Boolean,
     default: false
+  },
+  // Multi-level approval for overtime and double duty
+  overtimeApprovalStatus: {
+    type: String,
+    enum: ['pending', 'supervisor_approved', 'manager_approved', 'rejected', null],
+    default: null
+  },
+  doubleDutyApprovalStatus: {
+    type: String,
+    enum: ['pending', 'supervisor_approved', 'manager_approved', 'rejected', null],
+    default: null
+  },
+  markedBySupervisor: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
+  },
+  approvedByManager: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
+  },
+  rejectedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
+  },
+  rejectionReason: {
+    type: String,
+    default: null
   }
 }, {
   timestamps: true

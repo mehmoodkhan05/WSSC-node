@@ -41,6 +41,7 @@ const LeaveManagementScreen = () => {
   const [currentUserId, setCurrentUserId] = useState('');
   const [currentUserRole, setCurrentUserRole] = useState('staff');
   const [currentUserDepartment, setCurrentUserDepartment] = useState(null);
+  const [currentUserDepartments, setCurrentUserDepartments] = useState([]); // For GMs with multiple departments
   const normalizedRole = normalizeRole(currentUserRole) || ROLE.STAFF;
   const canApproveLeave = hasManagementPrivileges(normalizedRole) || hasFullControl(normalizedRole);
   const isSupervisorRole = normalizedRole === ROLE.SUPERVISOR;
@@ -68,7 +69,9 @@ const LeaveManagementScreen = () => {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [stf, sups, mgrs, gMgrs, asgs, userProfile, requests] = await Promise.all([
+      
+      // Fetch all data in parallel, but handle individual errors
+      const [stfResult, supsResult, mgrsResult, gMgrsResult, asgsResult, userProfileResult, requestsResult] = await Promise.allSettled([
         fetchStaff(),
         fetchSupervisors(),
         fetchManagers(),
@@ -77,6 +80,24 @@ const LeaveManagementScreen = () => {
         getProfile(),
         fetchLeaveRequests(),
       ]);
+      
+      // Extract data from settled promises (use empty arrays as fallbacks)
+      const stf = stfResult.status === 'fulfilled' ? stfResult.value : [];
+      const sups = supsResult.status === 'fulfilled' ? supsResult.value : [];
+      const mgrs = mgrsResult.status === 'fulfilled' ? mgrsResult.value : [];
+      const gMgrs = gMgrsResult.status === 'fulfilled' ? gMgrsResult.value : [];
+      const asgs = asgsResult.status === 'fulfilled' ? asgsResult.value : [];
+      const userProfile = userProfileResult.status === 'fulfilled' ? userProfileResult.value : null;
+      const requests = requestsResult.status === 'fulfilled' ? requestsResult.value : [];
+      
+      // Log any errors for debugging
+      if (stfResult.status === 'rejected') console.warn('Failed to load staff:', stfResult.reason);
+      if (supsResult.status === 'rejected') console.warn('Failed to load supervisors:', supsResult.reason);
+      if (mgrsResult.status === 'rejected') console.warn('Failed to load managers:', mgrsResult.reason);
+      if (gMgrsResult.status === 'rejected') console.warn('Failed to load general managers:', gMgrsResult.reason);
+      if (asgsResult.status === 'rejected') console.warn('Failed to load assignments:', asgsResult.reason);
+      if (userProfileResult.status === 'rejected') console.warn('Failed to load user profile:', userProfileResult.reason);
+      if (requestsResult.status === 'rejected') console.warn('Failed to load leave requests:', requestsResult.reason);
       
       setStaff(stf || []);
       setSupervisors(sups || []);
@@ -91,9 +112,11 @@ const LeaveManagementScreen = () => {
 
       setCurrentUserId(userId || '');
       setCurrentUserRole(normalizedRole);
-      // Get current user's department
+      // Get current user's department (single and array for GMs)
       const userDept = userProfile?.department || null;
+      const userDepts = userProfile?.departments || [];
       setCurrentUserDepartment(userDept);
+      setCurrentUserDepartments(userDepts);
       
       if (normalizedRole === ROLE.STAFF) {
         setLeaveFor('staff');
@@ -192,19 +215,27 @@ const LeaveManagementScreen = () => {
           return;
         }
       }
-    } else {
-      // For staff and supervisors, use existing logic
-      const effectiveSupervisor = leaveFor === 'supervisor' && currentUserRole === 'supervisor' 
-        ? currentUserId 
-        : selectedSupervisor;
+    } else if (isSupervisorRole && leaveFor === 'supervisor') {
+      // Supervisor submitting leave for themselves
+      staffIdForRequest = currentUserId; // The supervisor is the one requesting leave
       
-      if (leaveFor === 'supervisor' && !effectiveSupervisor) {
-        Alert.alert('Error', 'Please select a supervisor');
+      // Find a manager to approve the supervisor's leave
+      if (managers && managers.length > 0) {
+        // Try to find a manager in the same department
+        const supervisorUser = supervisors.find(s => s.user_id === currentUserId);
+        const supervisorDept = supervisorUser?.department;
+        const deptManager = managers.find(m => m.department === supervisorDept);
+        supervisorIdForRequest = deptManager ? deptManager.user_id : managers[0].user_id;
+      } else if (generalManagers && generalManagers.length > 0) {
+        supervisorIdForRequest = generalManagers[0].user_id;
+      } else {
+        Alert.alert('Error', 'No Manager or General Manager found to approve your leave request.');
         return;
       }
-      
-      if (leaveFor === 'supervisor' && isSupervisorRole && !currentUserId) {
-        Alert.alert('Error', 'Unable to identify current user. Please refresh the page.');
+    } else {
+      // For staff members or supervisors submitting for their assigned staff
+      if (leaveFor === 'supervisor' && !selectedSupervisor) {
+        Alert.alert('Error', 'Please select a supervisor');
         return;
       }
 
@@ -218,7 +249,7 @@ const LeaveManagementScreen = () => {
         ? currentUserId 
         : selectedSupervisor;
       
-      supervisorIdForRequest = leaveFor === 'supervisor' ? effectiveSupervisor : effectiveSupervisorForStaff;
+      supervisorIdForRequest = leaveFor === 'supervisor' ? selectedSupervisor : effectiveSupervisorForStaff;
     }
     
     if (!selectedLeaveType) {
@@ -293,8 +324,11 @@ const LeaveManagementScreen = () => {
     generalManagers.find(s => s.user_id === currentUserId);
   const assignedSupervisor = supervisors.find(s => s.user_id === selectedSupervisor);
 
-  // Helper function to get the role of a user by their ID
-  const getUserRole = (userId) => {
+  // Helper function to get the role of a user by their ID (fallback to user lists)
+  const getUserRole = (userId, requestRole = null) => {
+    // If role is provided directly from request, use it
+    if (requestRole) return normalizeRole(requestRole);
+    
     const user = staff.find(s => s.user_id === userId) ||
       supervisors.find(s => s.user_id === userId) ||
       managers.find(s => s.user_id === userId) ||
@@ -302,8 +336,11 @@ const LeaveManagementScreen = () => {
     return user ? normalizeRole(user.role) : null;
   };
 
-  // Helper function to get the department of a user by their ID
-  const getUserDepartment = (userId) => {
+  // Helper function to get the department of a user by their ID (fallback to user lists)
+  const getUserDepartment = (userId, requestDept = null) => {
+    // If department is provided directly from request, use it
+    if (requestDept) return requestDept;
+    
     const user = staff.find(s => s.user_id === userId) ||
       supervisors.find(s => s.user_id === userId) ||
       managers.find(s => s.user_id === userId) ||
@@ -311,11 +348,21 @@ const LeaveManagementScreen = () => {
     return user ? (user.department || null) : null;
   };
 
-  // Helper function to check if a user's department matches the current user's department
-  const isSameDepartment = (userId) => {
-    if (!currentUserDepartment) return false; // If current user has no department, can't match
-    const userDept = getUserDepartment(userId);
-    if (!userDept) return false; // If target user has no department, can't match
+  // Helper function to check if a user's department matches the current user's department(s)
+  const isSameDepartment = (userId, requestDept = null) => {
+    const userDept = getUserDepartment(userId, requestDept);
+    if (!userDept) return true; // If target user has no department, show it (can't filter)
+    
+    // For GMs with multiple departments, check against the departments array
+    if (isGeneralManagerRole && currentUserDepartments && currentUserDepartments.length > 0) {
+      const normalizedUserDept = userDept.toLowerCase().trim();
+      return currentUserDepartments.some(dept => 
+        dept && dept.toLowerCase().trim() === normalizedUserDept
+      );
+    }
+    
+    // For single department users (managers, etc.)
+    if (!currentUserDepartment) return true; // If current user has no department, show all
     // Normalize department values for comparison (case-insensitive)
     return userDept.toLowerCase().trim() === currentUserDepartment.toLowerCase().trim();
   };
@@ -324,90 +371,172 @@ const LeaveManagementScreen = () => {
   const getFilteredLeaveRequests = () => {
     let filtered = [];
     
+    // Debug logging
+    console.log('=== Leave Request Filtering Debug ===');
+    console.log('Current User Role:', currentUserRole, '| Normalized:', normalizedRole);
+    console.log('Current User ID:', currentUserId);
+    console.log('Current User Department:', currentUserDepartment);
+    console.log('Current User Departments (array):', currentUserDepartments);
+    console.log('Total Leave Requests:', leaveRequests.length);
+    console.log('Role Flags - isManager:', isManagerRole, '| isGM:', isGeneralManagerRole, '| isCEO:', isCEORole, '| isSuperAdmin:', isSuperAdminRole);
+    
+    // If still loading or no user ID, return all requests to avoid filtering issues
+    if (!currentUserId || loading) {
+      console.log('Data not ready yet, returning empty array');
+      return [];
+    }
+    
     if (isManagerRole) {
       // Managers can see:
-      // 1. Their own requests (all statuses)
-      // 2. Pending requests from staff and supervisors in their department (not managers or GMs)
+      // 1. Their own requests (all statuses) - approved by GM
+      // 2. Requests from their direct reports (supervisors/staff who report to them)
       filtered = leaveRequests.filter(request => {
-        const requestStaffRole = getUserRole(request.staff_id);
+        const requestStaffRole = getUserRole(request.staff_id, request.staff_role);
         const isOwnRequest = request.staff_id === currentUserId;
-        const isStaffOrSupervisorRequest = requestStaffRole === ROLE.STAFF || requestStaffRole === ROLE.SUPERVISOR;
-        const isPending = request.status === 'pending';
-        const isInSameDepartment = isSameDepartment(request.staff_id);
-        // Own requests always visible, or pending requests from staff/supervisors in same department
-        return isOwnRequest || (isStaffOrSupervisorRequest && isPending && isInSameDepartment);
+        
+        if (isOwnRequest) return true;
+        
+        // Check if this is from someone in manager's team
+        const isStaffOrSupervisorRequest = !requestStaffRole || 
+          requestStaffRole === ROLE.STAFF || 
+          requestStaffRole === ROLE.SUPERVISOR;
+        
+        if (!isStaffOrSupervisorRequest) return false;
+        
+        // Check if staff/supervisor reports to this manager
+        const reportsToMe = request.staff_manager_id === currentUserId || 
+                           request.supervisor_manager_id === currentUserId;
+        
+        // Debug each request
+        console.log(`Request ${request.id}: staff_role=${request.staff_role}, staff_manager_id=${request.staff_manager_id}, supervisor_manager_id=${request.supervisor_manager_id}, reportsToMe=${reportsToMe}`);
+        
+        return reportsToMe;
       });
     } else if (isGeneralManagerRole) {
       // General Managers can see:
-      // 1. Their own requests (all statuses)
-      // 2. Pending requests from staff, supervisors, and managers in their department (not other GMs)
+      // 1. Their own requests (all statuses) - approved by CEO/Super Admin
+      // 2. ALL requests from their assigned department(s) - staff, supervisors, managers
       filtered = leaveRequests.filter(request => {
-        const requestStaffRole = getUserRole(request.staff_id);
+        const requestStaffRole = getUserRole(request.staff_id, request.staff_role);
         const isOwnRequest = request.staff_id === currentUserId;
-        const isStaffSupervisorOrManagerRequest = 
-          requestStaffRole === ROLE.STAFF || 
-          requestStaffRole === ROLE.SUPERVISOR || 
-          requestStaffRole === ROLE.MANAGER;
-        const isPending = request.status === 'pending';
-        const isInSameDepartment = isSameDepartment(request.staff_id);
-        // Own requests always visible, or pending requests from staff/supervisors/managers in same department
-        return isOwnRequest || (isStaffSupervisorOrManagerRequest && isPending && isInSameDepartment);
+        
+        if (isOwnRequest) return true;
+        
+        // Exclude other GMs and higher
+        if (requestStaffRole === ROLE.GENERAL_MANAGER || 
+            requestStaffRole === ROLE.CEO || 
+            requestStaffRole === ROLE.SUPER_ADMIN) {
+          return false;
+        }
+        
+        // GM sees all requests from their assigned department(s)
+        const isInMyDepartments = isSameDepartment(request.staff_id, request.staff_department);
+        
+        console.log(`GM Filter - Request ${request.id}: dept=${request.staff_department}, isInMyDepartments=${isInMyDepartments}`);
+        
+        return isInMyDepartments;
       });
     } else if (isCEORole || isSuperAdminRole) {
-      // CEO/Super Admin can see all requests
+      // CEO/Super Admin can see all requests - can approve GM requests and all others
       filtered = leaveRequests;
     } else if (isStaffRole) {
+      // Staff can only see their own requests
       filtered = leaveRequests.filter(request => request.staff_id === currentUserId);
     } else if (isSupervisorRole) {
-      // Supervisors see their own requests (all statuses) and their assigned staff's non-pending requests
-      // They do NOT see their assigned staff's pending requests (those are for management roles)
+      // Supervisors see:
+      // 1. Their own requests (all statuses) - approved by Manager
+      // 2. Their assigned staff's requests (all statuses for visibility, but can't approve)
       const assignedStaffIds = assignments
         .filter(a => a.supervisor_id === currentUserId && a.is_active)
         .map(a => a.staff_id);
       
       filtered = leaveRequests.filter(request => {
         const isOwnRequest = request.staff_id === currentUserId;
-        // For assigned staff requests, only show non-pending ones (pending are for management only)
-        const isAssignedStaffRequest = assignedStaffIds.includes(request.staff_id) && request.status !== 'pending';
+        const isAssignedStaffRequest = assignedStaffIds.includes(request.staff_id);
         return isOwnRequest || isAssignedStaffRequest;
       });
+    } else {
+      // Fallback: if role is not recognized, show own requests at minimum
+      console.log('Role not recognized, showing own requests only');
+      filtered = leaveRequests.filter(request => request.staff_id === currentUserId);
     }
     
-    // Sort: pending requests first, then others
+    console.log('Filtered Results:', filtered.length);
+    console.log('=====================================');
+    
+    // Sort: pending requests first, then by date
     return filtered.sort((a, b) => {
       if (a.status === 'pending' && b.status !== 'pending') return -1;
       if (a.status !== 'pending' && b.status === 'pending') return 1;
-      // If both have same pending status, maintain original order (or sort by date)
+      // If both have same pending status, sort by date (newest first)
       return new Date(b.created_at || 0) - new Date(a.created_at || 0);
     });
   };
 
   const filteredLeaveRequests = getFilteredLeaveRequests();
 
-  // Determine if current user can approve a specific request
+  // Determine if current user can approve a specific request based on reporting chain
   const canApproveRequest = (request) => {
     if (request.status !== 'pending') return false;
     
-    const requestStaffRole = getUserRole(request.staff_id);
+    // Can't approve your own request
+    if (request.staff_id === currentUserId) return false;
+    
+    const requestStaffRole = getUserRole(request.staff_id, request.staff_role);
     
     if (isManagerRole) {
-      // Managers can only approve staff and supervisor requests in their department
-      const isStaffOrSupervisor = requestStaffRole === ROLE.STAFF || requestStaffRole === ROLE.SUPERVISOR;
-      const isInSameDepartment = isSameDepartment(request.staff_id);
-      return isStaffOrSupervisor && isInSameDepartment;
+      // Managers can only approve requests from their direct reports:
+      // 1. Supervisors who report to this manager (supervisor.managerId === currentUserId)
+      // 2. Staff who are under supervisors reporting to this manager
+      
+      if (requestStaffRole === ROLE.SUPERVISOR) {
+        // Check if this supervisor reports to current manager
+        return request.staff_manager_id === currentUserId;
+      } else if (requestStaffRole === ROLE.STAFF || !requestStaffRole) {
+        // Check if staff's manager is current user, or staff's supervisor reports to current manager
+        if (request.staff_manager_id === currentUserId) {
+          return true;
+        }
+        // Check if the supervisor who submitted the request reports to current manager
+        if (request.supervisor_manager_id === currentUserId) {
+          return true;
+        }
+        return false;
+      }
+      return false;
     } else if (isGeneralManagerRole) {
-      // General Managers can approve staff, supervisor, and manager requests in their department
-      const isStaffSupervisorOrManager = requestStaffRole === ROLE.STAFF || 
-             requestStaffRole === ROLE.SUPERVISOR || 
-             requestStaffRole === ROLE.MANAGER;
-      const isInSameDepartment = isSameDepartment(request.staff_id);
-      return isStaffSupervisorOrManager && isInSameDepartment;
+      // General Managers can approve ALL requests from their assigned department(s)
+      // (staff, supervisors, managers - anyone below GM level in their departments)
+      
+      // Exclude other GMs and higher - can't approve
+      if (requestStaffRole === ROLE.GENERAL_MANAGER || 
+          requestStaffRole === ROLE.CEO || 
+          requestStaffRole === ROLE.SUPER_ADMIN) {
+        return false;
+      }
+      
+      // Can approve anyone in their department(s)
+      return isSameDepartment(request.staff_id, request.staff_department);
     } else if (isCEORole || isSuperAdminRole) {
-      // CEO/Super Admin can approve all requests (no department restriction)
+      // CEO/Super Admin can approve all requests including GM requests
       return true;
     }
     
     return false;
+  };
+
+  // Get who should approve a request (for display purposes)
+  const getApprovalAuthority = (request) => {
+    const requestStaffRole = getUserRole(request.staff_id, request.staff_role);
+    
+    if (requestStaffRole === ROLE.GENERAL_MANAGER) {
+      return 'CEO / Super Admin';
+    } else if (requestStaffRole === ROLE.MANAGER) {
+      return 'General Manager';
+    } else if (requestStaffRole === ROLE.SUPERVISOR || requestStaffRole === ROLE.STAFF) {
+      return 'Manager / General Manager';
+    }
+    return 'Management';
   };
 
   const getStatusColor = (status) => {
@@ -620,12 +749,12 @@ const LeaveManagementScreen = () => {
       style={styles.container}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
     >
-      <View style={styles.header}>
+      {/* <View style={styles.header}>
         <Text style={styles.title}>Leave Management</Text>
         <Text style={styles.subtitle}>
           {canApproveLeave ? 'View and manage leave requests' : 'Mark staff leave for today'}
         </Text>
-      </View>
+      </View> */}
 
       {showSubmissionForm && (
         <Card style={styles.card}>
@@ -897,6 +1026,9 @@ const LeaveManagementScreen = () => {
                 <View style={styles.requestHeader}>
                   <View style={styles.requestHeaderLeft}>
                     <Text style={styles.staffName}>{request.staff_name || 'Unknown Staff'}</Text>
+                    {request.staff_department && (
+                      <Text style={styles.departmentName}>Dept: {request.staff_department}</Text>
+                    )}
                     {request.supervisor_name && (
                       <Text style={styles.supervisorName}>Supervisor: {request.supervisor_name}</Text>
                     )}
@@ -921,6 +1053,18 @@ const LeaveManagementScreen = () => {
                 {request.approved_by_name && (
                   <Text style={styles.approvedBy}>
                     {request.status === 'approved' ? 'Approved' : request.status === 'rejected' ? 'Rejected' : 'Processed'} by: {request.approved_by_name}
+                  </Text>
+                )}
+
+                {request.status === 'pending' && !canApproveRequest(request) && (
+                  <Text style={styles.pendingApproval}>
+                    ⏳ Awaiting approval from: {getApprovalAuthority(request)}
+                  </Text>
+                )}
+
+                {request.staff_id === currentUserId && request.status === 'pending' && (
+                  <Text style={styles.ownRequestNote}>
+                    📝 This is your leave request
                   </Text>
                 )}
 
@@ -1248,6 +1392,12 @@ const styles = StyleSheet.create({
     color: '#333',
     marginBottom: 4,
   },
+  departmentName: {
+    fontSize: 12,
+    color: '#007AFF',
+    marginBottom: 2,
+    fontWeight: '500',
+  },
   supervisorName: {
     fontSize: 14,
     color: '#666',
@@ -1282,6 +1432,18 @@ const styles = StyleSheet.create({
   approvedBy: {
     fontSize: 12,
     color: '#666',
+    marginTop: 4,
+    fontStyle: 'italic',
+  },
+  pendingApproval: {
+    fontSize: 12,
+    color: '#ff9800',
+    marginTop: 4,
+    fontStyle: 'italic',
+  },
+  ownRequestNote: {
+    fontSize: 12,
+    color: '#007AFF',
     marginTop: 4,
     fontStyle: 'italic',
   },

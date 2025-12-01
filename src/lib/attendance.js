@@ -58,13 +58,17 @@ export async function fetchAttendanceReport(filters = {}) {
       return [];
     }
 
-    const response = await apiClient.get('/attendance/report', {
+    // Build query params, only include defined values
+    const params = {
       dateFrom: dateFromStr,
       dateTo: dateToStr,
-      supervisorId: filters.supervisorId || null,
-      areaId: filters.areaId || null,
-      status: filters.status || 'all',
-    });
+    };
+    
+    if (filters.supervisorId) params.supervisorId = filters.supervisorId;
+    if (filters.areaId) params.areaId = filters.areaId;
+    if (filters.status) params.status = filters.status;
+
+    const response = await apiClient.get('/attendance/report', params);
 
     return Array.isArray(response.data) ? response.data : [];
   } catch (error) {

@@ -378,11 +378,115 @@ router.put('/:id/leadership', protect, authorize('ceo', 'super_admin', 'general_
   }
 });
 
+// @route   GET /api/users/:id/can-delete
+// @desc    Check if user can be deleted (no child data)
+// @access  Private
+router.get('/:id/can-delete', protect, async (req, res) => {
+  try {
+    const StaffAssignment = require('../models/StaffAssignment');
+    const Attendance = require('../models/Attendance');
+    const SupervisorLocation = require('../models/SupervisorLocation');
+    const LeaveRequest = require('../models/LeaveRequest');
+    
+    // Check for staff assignments (as staff or supervisor)
+    const hasStaffAssignments = await StaffAssignment.exists({ 
+      $or: [
+        { staffId: req.params.id },
+        { supervisorId: req.params.id }
+      ]
+    });
+    
+    // Check for attendance records
+    const hasAttendance = await Attendance.exists({ 
+      $or: [
+        { staffId: req.params.id },
+        { supervisorId: req.params.id }
+      ]
+    });
+    
+    // Check for supervisor location mappings
+    const hasSupervisorMappings = await SupervisorLocation.exists({ 
+      supervisorId: req.params.id 
+    });
+    
+    // Check for leave requests
+    const hasLeaveRequests = await LeaveRequest.exists({ 
+      staffId: req.params.id 
+    });
+    
+    const canDelete = !hasStaffAssignments && !hasAttendance && !hasSupervisorMappings && !hasLeaveRequests;
+    
+    let reasons = [];
+    if (hasStaffAssignments) reasons.push('staff assignments');
+    if (hasAttendance) reasons.push('attendance records');
+    if (hasSupervisorMappings) reasons.push('supervisor location mappings');
+    if (hasLeaveRequests) reasons.push('leave requests');
+    
+    res.json({ 
+      success: true, 
+      canDelete,
+      hasStaffAssignments: !!hasStaffAssignments,
+      hasAttendance: !!hasAttendance,
+      hasSupervisorMappings: !!hasSupervisorMappings,
+      hasLeaveRequests: !!hasLeaveRequests,
+      reason: reasons.length > 0 ? `User has ${reasons.join(', ')}` : null
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // @route   DELETE /api/users/:id
-// @desc    Delete user
+// @desc    Delete user (only if no child data)
 // @access  Private/Admin
 router.delete('/:id', protect, authorize('ceo', 'super_admin'), async (req, res) => {
   try {
+    const StaffAssignment = require('../models/StaffAssignment');
+    const Attendance = require('../models/Attendance');
+    const SupervisorLocation = require('../models/SupervisorLocation');
+    const LeaveRequest = require('../models/LeaveRequest');
+    
+    // Check for child data
+    const hasStaffAssignments = await StaffAssignment.exists({ 
+      $or: [
+        { staffId: req.params.id },
+        { supervisorId: req.params.id }
+      ]
+    });
+    
+    const hasAttendance = await Attendance.exists({ 
+      $or: [
+        { staffId: req.params.id },
+        { supervisorId: req.params.id }
+      ]
+    });
+    
+    const hasSupervisorMappings = await SupervisorLocation.exists({ 
+      supervisorId: req.params.id 
+    });
+    
+    const hasLeaveRequests = await LeaveRequest.exists({ 
+      staffId: req.params.id 
+    });
+    
+    if (hasStaffAssignments || hasAttendance || hasSupervisorMappings || hasLeaveRequests) {
+      let reasons = [];
+      if (hasStaffAssignments) reasons.push('staff assignments');
+      if (hasAttendance) reasons.push('attendance records');
+      if (hasSupervisorMappings) reasons.push('supervisor location mappings');
+      if (hasLeaveRequests) reasons.push('leave requests');
+      
+      return res.status(400).json({
+        success: false,
+        error: `Cannot delete user with ${reasons.join(', ')}`,
+        hasChildren: true,
+        hasStaffAssignments: !!hasStaffAssignments,
+        hasAttendance: !!hasAttendance,
+        hasSupervisorMappings: !!hasSupervisorMappings,
+        hasLeaveRequests: !!hasLeaveRequests
+      });
+    }
+
     const user = await User.findById(req.params.id);
 
     if (!user) {

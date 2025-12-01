@@ -16,6 +16,8 @@ import {
   fetchProfiles,
   fetchManagers,
   fetchGeneralManagers,
+  checkUserCanDelete,
+  deleteUser,
 } from '../lib/staff';
 // Parse import removed - using REST API via apiClient
 import {
@@ -60,6 +62,7 @@ const UsersScreen = () => {
   const [editingUser, setEditingUser] = useState(null);
   const [showEditModal, setShowEditModal] = useState(false);
   const [isActive, setIsActive] = useState(true);
+  const [userDeletability, setUserDeletability] = useState({});
 
   const normalizedRole = normalizeRole(profile?.role) || ROLE.STAFF;
   const canManageUsers = hasFullControl(normalizedRole) || normalizedRole === ROLE.CEO;
@@ -75,11 +78,56 @@ const UsersScreen = () => {
       setProfiles(list || []);
       setManagers(managers || []);
       setGeneralManagers(generalManagers || []);
+      // Check deletability for all users
+      checkAllUsersDeletability(list || []);
     } catch (e) {
       Alert.alert('Error', e.message || 'Failed to load users');
     } finally {
       setLoading(false);
     }
+  };
+
+  const checkAllUsersDeletability = async (usersList) => {
+    const deletabilityMap = {};
+    for (const user of usersList) {
+      try {
+        const result = await checkUserCanDelete(user.user_id);
+        deletabilityMap[user.user_id] = result;
+      } catch (error) {
+        console.error(`Error checking deletability for user ${user.user_id}:`, error);
+        deletabilityMap[user.user_id] = { canDelete: false, reason: 'Unable to verify' };
+      }
+    }
+    setUserDeletability(deletabilityMap);
+  };
+
+  const handleDelete = async (userId) => {
+    const deletability = userDeletability[userId];
+    if (!deletability?.canDelete) {
+      Alert.alert('Cannot Delete', deletability?.reason || 'User has associated data and cannot be deleted');
+      return;
+    }
+
+    Alert.alert(
+      'Delete User',
+      'Are you sure you want to delete this user? This action cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteUser(userId);
+              Alert.alert('Success', 'User deleted successfully');
+              await load();
+            } catch (error) {
+              Alert.alert('Error', error.message || 'Failed to delete user');
+            }
+          },
+        },
+      ]
+    );
   };
 
   useEffect(() => { load(); }, []);
@@ -250,6 +298,9 @@ const UsersScreen = () => {
 
   const renderUser = ({ item }) => {
     const isUserActive = item.is_active !== false; // Default to true if not set
+    const deletability = userDeletability[item.user_id];
+    const canDelete = deletability?.canDelete;
+    
     return (
       <View style={[styles.userItem, !isUserActive && styles.userItemInactive]}>
         <View style={styles.userInfo}>
@@ -274,12 +325,29 @@ const UsersScreen = () => {
             </TouchableOpacity>
           </View>
         </View>
-        <TouchableOpacity
-          style={styles.editButton}
-          onPress={() => openEditModal(item)}
-        >
-          <Text style={styles.editButtonText}>Edit</Text>
-        </TouchableOpacity>
+        <View style={styles.userActions}>
+          <TouchableOpacity
+            style={styles.editButton}
+            onPress={() => openEditModal(item)}
+          >
+            <Text style={styles.editButtonText}>Edit</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.deleteButton, 
+              !canDelete && styles.deleteButtonDisabled
+            ]}
+            onPress={() => handleDelete(item.user_id)}
+            disabled={!canDelete}
+          >
+            <Text style={[
+              styles.deleteButtonText,
+              !canDelete && styles.deleteButtonTextDisabled
+            ]}>
+              {canDelete ? 'Delete' : 'In Use'}
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
     );
   };
@@ -1006,6 +1074,11 @@ const styles = StyleSheet.create({
     color: '#333',
     fontWeight: '500',
   },
+  userActions: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+  },
   editButton: {
     backgroundColor: '#007AFF',
     paddingHorizontal: 12,
@@ -1016,6 +1089,23 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 14,
     fontWeight: '500',
+  },
+  deleteButton: {
+    backgroundColor: '#ef4444',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  deleteButtonDisabled: {
+    backgroundColor: '#e5e7eb',
+  },
+  deleteButtonText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  deleteButtonTextDisabled: {
+    color: '#9ca3af',
   },
   emptyText: {
     textAlign: 'center',

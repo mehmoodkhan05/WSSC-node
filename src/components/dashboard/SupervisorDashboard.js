@@ -1,9 +1,10 @@
-import React, { useMemo } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, FlatList } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, Alert, Modal } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/Card';
+import { markOvertime, markDoubleDuty } from '../../lib/approvals';
 
 const formatStatusLabel = (status) => {
   switch ((status || '').toLowerCase()) {
@@ -19,9 +20,70 @@ const formatStatusLabel = (status) => {
   }
 };
 
-const SupervisorDashboard = ({ stats, records, details, profile }) => {
+const SupervisorDashboard = ({ stats, records, details, profile, onRefresh }) => {
   const navigation = useNavigation();
   const supervisorId = profile?.user_id || null;
+  const [selectedStaff, setSelectedStaff] = useState(null);
+  const [showActionModal, setShowActionModal] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  // Get attendance record ID for a staff member
+  const getAttendanceIdForStaff = (staffId) => {
+    const record = (records || []).find(r => r.staffId === staffId);
+    return record?.id || null;
+  };
+
+  // Handle staff click to show action modal
+  const handleStaffClick = (staff) => {
+    setSelectedStaff(staff);
+    setShowActionModal(true);
+  };
+
+  // Mark overtime handler
+  const handleMarkOvertime = async () => {
+    if (!selectedStaff) return;
+    const attendanceId = getAttendanceIdForStaff(selectedStaff.staffId);
+    if (!attendanceId) {
+      Alert.alert('Error', 'Staff member has no attendance record for today. They must clock in first.');
+      setShowActionModal(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      await markOvertime(attendanceId);
+      Alert.alert('Success', `Overtime marked for ${selectedStaff.name}. Pending manager approval.`);
+      setShowActionModal(false);
+      if (onRefresh) onRefresh();
+    } catch (error) {
+      Alert.alert('Error', error.message || 'Failed to mark overtime');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Mark double duty handler
+  const handleMarkDoubleDuty = async () => {
+    if (!selectedStaff) return;
+    const attendanceId = getAttendanceIdForStaff(selectedStaff.staffId);
+    if (!attendanceId) {
+      Alert.alert('Error', 'Staff member has no attendance record for today. They must clock in first.');
+      setShowActionModal(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      await markDoubleDuty(attendanceId);
+      Alert.alert('Success', `Double duty marked for ${selectedStaff.name}. Pending manager approval.`);
+      setShowActionModal(false);
+      if (onRefresh) onRefresh();
+    } catch (error) {
+      Alert.alert('Error', error.message || 'Failed to mark double duty');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const locationMap = useMemo(() => {
     const map = new Map();
@@ -169,6 +231,10 @@ const SupervisorDashboard = ({ stats, records, details, profile }) => {
         </CardHeader>
         <CardContent style={styles.overviewContent}>
           <View style={styles.overviewItem}>
+            <Text style={[styles.overviewValue, { color: '#2563eb' }]}>{teamMembers.length}</Text>
+            <Text style={styles.overviewLabel}>Total</Text>
+          </View>
+          <View style={styles.overviewItem}>
             <Text style={[styles.overviewValue, { color: '#22c55e' }]}>{stats.presentCount}</Text>
             <Text style={styles.overviewLabel}>Present</Text>
           </View>
@@ -200,9 +266,16 @@ const SupervisorDashboard = ({ stats, records, details, profile }) => {
               renderItem={({ item }) => {
                 const meta = formatStatusLabel(item.status);
                 return (
-                  <View style={styles.memberRow}>
+                  <TouchableOpacity 
+                    style={styles.memberRow}
+                    onPress={() => handleStaffClick(item)}
+                    activeOpacity={0.7}
+                  >
                     <View style={styles.memberInfo}>
-                      <Text style={styles.memberName}>{item.name}</Text>
+                      <View style={styles.memberNameRow}>
+                        <Text style={styles.memberName}>{item.name}</Text>
+                        <Feather name="chevron-right" size={16} color="#94a3b8" />
+                      </View>
                       <Text style={styles.memberMeta}>
                         {item.locationName} • {item.clockIn ? 'Clocked In' : 'Not Clocked In'}
                       </Text>
@@ -210,7 +283,7 @@ const SupervisorDashboard = ({ stats, records, details, profile }) => {
                     <View style={[styles.statusChip, { backgroundColor: meta.color + '1A' }]}>
                       <Text style={[styles.statusChipText, { color: meta.color }]}>{meta.label}</Text>
                     </View>
-                  </View>
+                  </TouchableOpacity>
                 );
               }}
             />
@@ -242,6 +315,58 @@ const SupervisorDashboard = ({ stats, records, details, profile }) => {
           ))}
         </CardContent>
       </Card>
+
+      {/* Staff Action Modal */}
+      <Modal
+        visible={showActionModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowActionModal(false)}
+      >
+        <TouchableOpacity 
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowActionModal(false)}
+        >
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>
+              {selectedStaff?.name || 'Staff Member'}
+            </Text>
+            <Text style={styles.modalSubtitle}>
+              Select an action for this staff member
+            </Text>
+
+            <TouchableOpacity
+              style={[styles.modalButton, styles.overtimeButton]}
+              onPress={handleMarkOvertime}
+              disabled={loading}
+            >
+              <Feather name="clock" size={20} color="white" />
+              <Text style={styles.modalButtonText}>
+                {loading ? 'Processing...' : 'Mark Overtime'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.modalButton, styles.doubleDutyButton]}
+              onPress={handleMarkDoubleDuty}
+              disabled={loading}
+            >
+              <Feather name="users" size={20} color="white" />
+              <Text style={styles.modalButtonText}>
+                {loading ? 'Processing...' : 'Mark Double Duty'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.modalButton, styles.cancelButton]}
+              onPress={() => setShowActionModal(false)}
+            >
+              <Text style={styles.cancelButtonText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 };
@@ -380,6 +505,69 @@ const styles = StyleSheet.create({
   },
   linkDescription: {
     fontSize: 13,
+    color: '#64748b',
+  },
+  memberNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalContent: {
+    backgroundColor: 'white',
+    borderRadius: 16,
+    padding: 24,
+    width: '100%',
+    maxWidth: 340,
+    alignItems: 'center',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginBottom: 4,
+    textAlign: 'center',
+  },
+  modalSubtitle: {
+    fontSize: 14,
+    color: '#64748b',
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  modalButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    width: '100%',
+    padding: 14,
+    borderRadius: 10,
+    marginBottom: 10,
+  },
+  overtimeButton: {
+    backgroundColor: '#f97316',
+  },
+  doubleDutyButton: {
+    backgroundColor: '#8b5cf6',
+  },
+  cancelButton: {
+    backgroundColor: '#f1f5f9',
+    marginTop: 4,
+  },
+  modalButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: 'white',
+  },
+  cancelButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
     color: '#64748b',
   },
 });

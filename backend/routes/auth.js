@@ -115,10 +115,15 @@ router.post('/login', async (req, res) => {
       token,
       user: {
         id: user._id,
+        user_id: user._id,
         email: user.email,
         fullName: user.fullName,
         role: user.role,
-        username: user.username
+        username: user.username,
+        department: user.department || null,
+        departments: user.departments || [],
+        manager_id: user.managerId || null,
+        general_manager_id: user.generalManagerId || null
       }
     });
   } catch (error) {

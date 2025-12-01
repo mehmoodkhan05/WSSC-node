@@ -12,6 +12,7 @@ import {
   TextInput,
   Linking,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as Sharing from 'expo-sharing';
@@ -33,12 +34,36 @@ import {
 } from '../lib/roles';
 
 const categories = [
-  { value: 'cleaning', label: 'Cleaning' },
-  { value: 'maintenance', label: 'Maintenance' },
-  { value: 'security', label: 'Security' },
-  { value: 'customer-service', label: 'Customer Service' },
-  { value: 'equipment', label: 'Equipment' },
-  { value: 'other', label: 'Other' },
+  // Sanitation Department
+  { value: 'solid-waste-collection', label: 'Solid Waste Collection', department: 'sanitation' },
+  { value: 'street-sweeping', label: 'Street Sweeping', department: 'sanitation' },
+  { value: 'drain-cleaning', label: 'Drain Cleaning', department: 'sanitation' },
+  { value: 'sanitary-inspection', label: 'Sanitary Inspection', department: 'sanitation' },
+  
+  // Water Supply Department
+  { value: 'water-supply-maintenance', label: 'Water Supply Maintenance', department: 'water_supply' },
+  { value: 'pipeline-repair', label: 'Pipeline Repair', department: 'water_supply' },
+  { value: 'valve-operation', label: 'Valve Operation', department: 'water_supply' },
+  { value: 'water-quality-check', label: 'Water Quality Check', department: 'water_supply' },
+  { value: 'tubewell-operation', label: 'Tubewell Operation', department: 'water_supply' },
+  
+  // Commercial Department
+  { value: 'billing-collection', label: 'Billing & Collection', department: 'commercial' },
+  { value: 'meter-reading', label: 'Meter Reading', department: 'commercial' },
+  { value: 'customer-complaint', label: 'Customer Complaint Handling', department: 'commercial' },
+  { value: 'connection-inspection', label: 'Connection Inspection', department: 'commercial' },
+  
+  // Administration Department
+  { value: 'office-administration', label: 'Office Administration', department: 'administration' },
+  { value: 'security-duty', label: 'Security Duty', department: 'administration' },
+  { value: 'vehicle-maintenance', label: 'Vehicle Maintenance', department: 'administration' },
+  { value: 'fleet-management', label: 'Fleet Management', department: 'administration' },
+  
+  // General (cross-department)
+  { value: 'equipment-operation', label: 'Equipment Operation', department: 'all' },
+  { value: 'field-inspection', label: 'Field Inspection', department: 'all' },
+  { value: 'emergency-response', label: 'Emergency Response', department: 'all' },
+  { value: 'other', label: 'Other', department: 'all' },
 ];
 
 const PerformanceReviewScreen = () => {
@@ -439,116 +464,91 @@ useEffect(() => {
 
   const handlePdfAction = async (report, action) => {
     try {
-      let currentPdfPath = report.pdf_path;
+      setGeneratingPdf(true);
+      setGeneratingPdfId(report.id);
+      
+      // Generate PDF with report data
+      const pdfUri = await generatePerformancePDF(report.id, {
+        staff_name: report.staff_name,
+        supervisor_name: report.supervisor_name,
+        location_name: report.location_name,
+        date: report.date,
+        category: report.category,
+        description: report.description,
+        photo_path: report.photo_path,
+        photo2_path: report.photo2_path,
+        photo3_path: report.photo3_path,
+        photo4_path: report.photo4_path,
+      });
 
-      // Generate or regenerate PDF if needed
-      if (action === 'regenerate' || !currentPdfPath) {
-        setGeneratingPdf(true);
-        setGeneratingPdfId(report.id);
-        
-        try {
-          const pdfPath = await generatePerformancePDF(report.id, {
-            staff_name: report.staff_name,
-            supervisor_name: report.supervisor_name,
-            location_name: report.location_name,
-            date: report.date,
-            category: report.category,
-            description: report.description,
-            photo_path: report.photo_path,
-            photo2_path: report.photo2_path,
-            photo3_path: report.photo3_path,
-            photo4_path: report.photo4_path,
-          });
-
-          currentPdfPath = pdfPath;
-
-          if (pdfPath) {
-            try {
-              await updatePerformanceReviewPDF(report.id, pdfPath);
-            } catch (updateError) {
-              console.warn('Failed to update PDF path:', updateError);
-            }
-          }
-
-          // Update local state
-          if (selectedDate) {
-            setSelectedDate(prev => prev ? {
-              ...prev,
-              reports: prev.reports.map(r => r.id === report.id ? { ...r, pdf_path: pdfPath } : r)
-            } : null);
-          }
-
-          if (action === 'regenerate') {
-            Alert.alert('Success', 'PDF regenerated successfully');
-            return;
-          }
-        } catch (error) {
-          console.error('PDF generation error:', error);
-          Alert.alert('Error', error.message || 'Failed to generate PDF');
-          return;
-        } finally {
-          setGeneratingPdf(false);
-          setGeneratingPdfId(null);
+      // For web, generatePerformancePDF opens print dialog directly
+      if (Platform.OS === 'web') {
+        if (action === 'regenerate') {
+          Alert.alert('Success', 'PDF opened in new window for printing/saving');
         }
-      }
-
-      if (!currentPdfPath) {
-        Alert.alert('Error', 'No PDF available for this report');
         return;
       }
 
-      if (action === 'preview') {
-        // Open PDF in external app
-        try {
-          const canOpen = await Linking.canOpenURL(currentPdfPath);
-          if (canOpen) {
-            await Linking.openURL(currentPdfPath);
-          } else {
-            Alert.alert('Error', 'Cannot open PDF. Please download it instead.');
-          }
-        } catch (error) {
-          console.error('Error opening PDF:', error);
-          Alert.alert('Error', 'Failed to open PDF');
+      // For mobile platforms
+      if (!pdfUri) {
+        Alert.alert('Error', 'Failed to generate PDF');
+        return;
+      }
+
+      // Update local state with new PDF path
+      if (selectedDate) {
+        setSelectedDate(prev => prev ? {
+          ...prev,
+          reports: prev.reports.map(r => r.id === report.id ? { ...r, pdf_path: pdfUri } : r)
+        } : null);
+      }
+
+      // Try to update the PDF path in backend (optional, may fail)
+      try {
+        await updatePerformanceReviewPDF(report.id, pdfUri);
+      } catch (updateError) {
+        console.warn('Failed to update PDF path in backend:', updateError);
+      }
+
+      if (action === 'regenerate') {
+        Alert.alert('Success', 'PDF regenerated successfully');
+        // Share the regenerated PDF
+        if (await Sharing.isAvailableAsync()) {
+          await Sharing.shareAsync(pdfUri, {
+            mimeType: 'application/pdf',
+            dialogTitle: 'Share Performance Report PDF',
+          });
         }
-      } else if (action === 'download') {
-        // Download PDF using expo-sharing
-        try {
-          const fileName = `performance_report_${report.date}_${report.id}.pdf`;
-          const fileUri = `${FileSystem.documentDirectory}${fileName}`;
+        return;
+      }
 
+      if (action === 'preview' || action === 'download') {
+        // Share/Download the PDF
+        if (await Sharing.isAvailableAsync()) {
+          await Sharing.shareAsync(pdfUri, {
+            mimeType: 'application/pdf',
+            dialogTitle: action === 'preview' ? 'View Performance Report PDF' : 'Save Performance Report PDF',
+          });
+        } else {
+          // Fallback: try to open with Linking
           try {
-            const fileInfo = await FileSystem.getInfoAsync(fileUri);
-            if (fileInfo.exists) {
-              await FileSystem.deleteAsync(fileUri, { idempotent: true });
+            const canOpen = await Linking.canOpenURL(pdfUri);
+            if (canOpen) {
+              await Linking.openURL(pdfUri);
+            } else {
+              Alert.alert('Success', `PDF saved to: ${pdfUri}`);
             }
-          } catch (cleanupError) {
-            console.warn('Failed to cleanup existing PDF before download:', cleanupError);
-          }
-
-          await FileSystem.downloadAsync(currentPdfPath, fileUri);
-
-          if (await Sharing.isAvailableAsync()) {
-            await Sharing.shareAsync(fileUri, {
-              mimeType: 'application/pdf',
-              dialogTitle: 'Share Performance Report PDF',
-            });
-          } else {
-            Alert.alert('Success', `PDF saved to ${fileUri}`);
-          }
-        } catch (error) {
-          console.error('Download error:', error);
-          Alert.alert('Error', 'Failed to download PDF. You can open it in browser instead.');
-          // Fallback: open in browser
-          try {
-            await Linking.openURL(currentPdfPath);
           } catch (linkError) {
-            console.error('Error opening PDF:', linkError);
+            Alert.alert('Success', `PDF saved to: ${pdfUri}`);
           }
         }
       }
     } catch (error) {
       console.error(`Error during PDF ${action}:`, error);
-      Alert.alert('Error', `Failed to ${action} PDF`);
+      Alert.alert('Error', error.message || `Failed to ${action} PDF`);
+    } finally {
+      setGeneratingPdf(false);
+      setGeneratingPdfId(null);
     }
   };
 

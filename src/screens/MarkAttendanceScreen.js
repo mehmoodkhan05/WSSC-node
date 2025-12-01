@@ -36,6 +36,8 @@ const MarkAttendanceScreen = () => {
   const { profile } = useAuth();
   const [loading, setLoading] = useState(false);
   const [locationVerified, setLocationVerified] = useState(false);
+  const [verifyingLocation, setVerifyingLocation] = useState(false);
+  const [verificationStatus, setVerificationStatus] = useState('');
   const [currentLat, setCurrentLat] = useState(null);
   const [currentLng, setCurrentLng] = useState(null);
 
@@ -57,6 +59,9 @@ const MarkAttendanceScreen = () => {
   const [supervisorLocations, setSupervisorLocations] = useState([]);
   const [todayAttendance, setTodayAttendance] = useState([]);
   const [currentUserProfile, setCurrentUserProfile] = useState(null);
+  
+  // Tab state for clock-in/clock-out pages
+  const [activeTab, setActiveTab] = useState('clockin'); // 'clockin' or 'clockout'
   const resolvedRole = normalizeRole(currentUserProfile?.role || profile?.role) || ROLE.STAFF;
   const isStaff = resolvedRole === ROLE.STAFF;
   const isSupervisor = resolvedRole === ROLE.SUPERVISOR;
@@ -282,18 +287,26 @@ const MarkAttendanceScreen = () => {
 
   const handleVerifyLocation = async () => {
     try {
+      setVerifyingLocation(true);
+      setVerificationStatus('Checking permissions...');
+      
       const isSelfAction = selectedStaff && selectedStaff === currentUserProfile?.user_id;
       
       // For Manager/GM clocking themselves, verify it's an office location
       if (isManagerOrGM && isSelfAction) {
+        setVerificationStatus('Validating office location...');
         const latest = await fetchLocations();
         const loc = (latest || []).find(l => l.id === currentLocationId);
         if (!loc) {
           Alert.alert('Error', 'Location not found');
+          setVerifyingLocation(false);
+          setVerificationStatus('');
           return;
         }
         if (!isOfficeLocation(loc)) {
           Alert.alert('Error', 'Managers and General Managers must verify location at an office location');
+          setVerifyingLocation(false);
+          setVerificationStatus('');
           return;
         }
       }
@@ -301,23 +314,58 @@ const MarkAttendanceScreen = () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
         Alert.alert('Permission Denied', 'Location permission is required');
+        setVerifyingLocation(false);
+        setVerificationStatus('');
         return;
       }
 
+      setVerificationStatus('Getting your GPS location...');
       const position = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.High,
       });
       const { latitude, longitude } = position.coords;
 
+      setVerificationStatus('Verifying you are at the location...');
       // Refresh locations to avoid stale values after edits
       const latest = await fetchLocations();
       const loc = (latest || []).find(l => l.id === currentLocationId);
       if (!loc) {
         Alert.alert('Error', 'Location not found');
+        setVerifyingLocation(false);
+        setVerificationStatus('');
         return;
       }
 
-      const ok = isWithinGeofence(latitude, longitude, loc.center_lat, loc.center_lng, loc.radius_meters);
+      // Ensure numeric values for geofence calculation
+      const centerLat = parseFloat(loc.center_lat);
+      const centerLng = parseFloat(loc.center_lng);
+      const radiusMeters = parseFloat(loc.radius_meters);
+
+      // Calculate distance for debugging
+      const R = 6371e3; // Earth's radius in meters
+      const φ1 = latitude * Math.PI / 180;
+      const φ2 = centerLat * Math.PI / 180;
+      const Δφ = (centerLat - latitude) * Math.PI / 180;
+      const Δλ = (centerLng - longitude) * Math.PI / 180;
+      const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+                Math.cos(φ1) * Math.cos(φ2) *
+                Math.sin(Δλ/2) * Math.sin(Δλ/2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      const distance = R * c;
+
+      // Debug logging for location verification
+      console.log('=== Location Verification Debug ===');
+      console.log('Location Name:', loc.name);
+      console.log('User Position:', { latitude, longitude });
+      console.log('Location Center:', { centerLat, centerLng });
+      console.log('Radius (meters):', radiusMeters);
+      console.log('Distance from center (meters):', Math.round(distance));
+      console.log('Difference:', Math.round(distance - radiusMeters), 'meters', distance <= radiusMeters ? '(WITHIN)' : '(OUTSIDE)');
+      
+      const ok = isWithinGeofence(latitude, longitude, centerLat, centerLng, radiusMeters);
+      console.log('Within Geofence:', ok);
+      console.log('===================================');
+      
       if (ok) {
         // Filter locations based on user role and assignments after verification
         let filteredLocations = [];
@@ -370,13 +418,19 @@ const MarkAttendanceScreen = () => {
         }
 
         setLocations(filteredLocations);
+        setVerificationStatus('');
+        setVerifyingLocation(false);
         Alert.alert('Success', `Location verified at ${loc.name}`);
         setLocationVerified(true);
       } else {
+        setVerificationStatus('');
+        setVerifyingLocation(false);
         Alert.alert('Location Error', 'You are not within the assigned location');
       }
     } catch (error) {
       console.error('Location error:', error);
+      setVerificationStatus('');
+      setVerifyingLocation(false);
       Alert.alert('Error', 'Failed to get location');
     }
   };
@@ -721,6 +775,33 @@ const MarkAttendanceScreen = () => {
 
   const filteredStaff = getFilteredStaff();
 
+  // Staff not yet clocked in (for clock-in tab)
+  const staffNotClockedIn = React.useMemo(() => {
+    return filteredStaff.filter(staffMember => 
+      !todayAttendance.some(att => att.staffId === staffMember.user_id && att.clockIn)
+    );
+  }, [filteredStaff, todayAttendance]);
+
+  // Staff who clocked in but haven't clocked out (for clock-out tab)
+  const staffClockedInNotOut = React.useMemo(() => {
+    return filteredStaff.filter(staffMember => 
+      todayAttendance.some(att => 
+        att.staffId === staffMember.user_id && att.clockIn && !att.clockOut
+      )
+    );
+  }, [filteredStaff, todayAttendance]);
+
+  // Get the appropriate staff list based on active tab
+  const getTabFilteredStaff = () => {
+    if (activeTab === 'clockin') {
+      return staffNotClockedIn;
+    } else {
+      return staffClockedInNotOut;
+    }
+  };
+
+  const tabFilteredStaff = getTabFilteredStaff();
+
   const AnimatedButton = ({ colors, onPress, disabled, children, style }) => {
     const scaleAnim = React.useRef(new Animated.Value(1)).current;
 
@@ -847,15 +928,30 @@ const MarkAttendanceScreen = () => {
             )}
 
             {!overrideMode && (
-              <TouchableOpacity
-                style={[styles.verifyButton, locationVerified && styles.verifiedButton]}
-                onPress={handleVerifyLocation}
-                disabled={locationVerified || !currentLocationId}
-              >
-                <Text style={styles.verifyButtonText}>
-                  {locationVerified ? '✓ Location Verified' : 'Verify Location'}
-                </Text>
-              </TouchableOpacity>
+              <>
+                <TouchableOpacity
+                  style={[
+                    styles.verifyButton, 
+                    locationVerified && styles.verifiedButton,
+                    verifyingLocation && styles.verifyingButton
+                  ]}
+                  onPress={handleVerifyLocation}
+                  disabled={locationVerified || !currentLocationId || verifyingLocation}
+                >
+                  <Text style={styles.verifyButtonText}>
+                    {locationVerified 
+                      ? '✓ Location Verified' 
+                      : verifyingLocation 
+                        ? '⏳ Verifying...' 
+                        : 'Verify Location'}
+                  </Text>
+                </TouchableOpacity>
+                {verifyingLocation && verificationStatus && (
+                  <View style={styles.verificationStatusContainer}>
+                    <Text style={styles.verificationStatusText}>{verificationStatus}</Text>
+                  </View>
+                )}
+              </>
             )}
             {overrideMode && (isManager || isGeneralManager) && (
               <View style={styles.overrideInfoBox}>
@@ -870,22 +966,54 @@ const MarkAttendanceScreen = () => {
         </Card>
         )}
 
+        {/* Tab Selector for Clock-In/Clock-Out Pages */}
+        {!hasExecutiveAccess && !isStaff && (
+          <View style={styles.tabContainer}>
+            <TouchableOpacity
+              style={[styles.tab, activeTab === 'clockin' && styles.tabActive]}
+              onPress={() => {
+                setActiveTab('clockin');
+                setSelectedStaff(''); // Reset selection when switching tabs
+              }}
+            >
+              <Text style={[styles.tabText, activeTab === 'clockin' && styles.tabTextActive]}>
+                Clock In ({staffNotClockedIn.length})
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.tab, activeTab === 'clockout' && styles.tabActive]}
+              onPress={() => {
+                setActiveTab('clockout');
+                setSelectedStaff(''); // Reset selection when switching tabs
+              }}
+            >
+              <Text style={[styles.tabText, activeTab === 'clockout' && styles.tabTextActive]}>
+                Clock Out ({staffClockedInNotOut.length})
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* Attendance Details - Hidden for CEO/Superadmin */}
         {!hasExecutiveAccess && (
           <Card style={styles.card}>
           <CardHeader>
-            <CardTitle>Attendance Details</CardTitle>
-            <CardDescription>Select staff and mark attendance</CardDescription>
+            <CardTitle>{activeTab === 'clockin' ? 'Clock In' : 'Clock Out'}</CardTitle>
+            <CardDescription>
+              {activeTab === 'clockin' 
+                ? 'Select staff to mark clock-in' 
+                : 'Select staff to mark clock-out'}
+            </CardDescription>
           </CardHeader>
           <CardContent style={styles.cardContent}>
-            {/* Hide staff dropdown when Manager/GM is clocking themselves (not in override mode) */}
-            {!((isManager || isGeneralManager) && !overrideMode) ? (
+            {/* Hide staff dropdown when Manager/GM is clocking themselves (not in override mode) or supervisor is clocking as supervisor */}
+            {!((isManager || isGeneralManager) && !overrideMode) && !(isSupervisor && clockAsSupervisor) ? (
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Staff Member</Text>
                 <SearchableDropdown
                   options={[
                     { label: 'Select staff member', value: '' },
-                    ...filteredStaff.map(s => ({ 
+                    ...(isStaff ? filteredStaff : tabFilteredStaff).map(s => ({ 
                       label: `${s.name || s.email}${s.empNo ? ` (ID: ${s.empNo})` : ''}`, 
                       value: s.user_id,
                       empNo: s.empNo || null,
@@ -894,7 +1022,13 @@ const MarkAttendanceScreen = () => {
                   ]}
                   selectedValue={selectedStaff}
                   onValueChange={setSelectedStaff}
-                  placeholder={filteredStaff.length === 0 ? 'No assigned staff for this supervisor at this location' : 'Select staff member'}
+                  placeholder={
+                    (isStaff ? filteredStaff : tabFilteredStaff).length === 0 
+                      ? (activeTab === 'clockin' 
+                          ? 'All staff have clocked in' 
+                          : 'No staff to clock out')
+                      : 'Select staff member'
+                  }
                   style={styles.dropdown}
                   disabled={!(hasManagerAccess || hasExecutiveAccess || isSupervisor) || (!!locationVerified && !overrideMode)}
                   searchPlaceholder="Search by name or employee ID..."
@@ -911,7 +1045,9 @@ const MarkAttendanceScreen = () => {
                 <Text style={styles.infoText}>
                   {currentUserProfile?.fullName || currentUserProfile?.name || 'You'}
                 </Text>
-                <Text style={styles.infoSubtext}>Clock in/out for yourself</Text>
+                <Text style={styles.infoSubtext}>
+                  {isSupervisor && clockAsSupervisor ? 'Clock in/out as supervisor' : 'Clock in/out for yourself'}
+                </Text>
               </View>
             )}
 
@@ -979,25 +1115,33 @@ const MarkAttendanceScreen = () => {
             </View>
 
             <View style={styles.buttonRow}>
-              <AnimatedButton
-                colors={['#2ecc71', '#27ae60']}
-                onPress={handleClockIn}
-                disabled={loading || (!overrideMode && !locationVerified)}
-              >
-                <Text style={styles.clockButtonText}>
-                  {loading ? 'Processing...' : 'Clock In'}
-                </Text>
-              </AnimatedButton>
+              {/* Show Clock In button when in clockin tab or for staff (who see both) */}
+              {(activeTab === 'clockin' || isStaff) && (
+                <AnimatedButton
+                  colors={['#2ecc71', '#27ae60']}
+                  onPress={handleClockIn}
+                  disabled={loading || (!overrideMode && !locationVerified)}
+                  style={!isStaff ? styles.fullWidthButton : undefined}
+                >
+                  <Text style={styles.clockButtonText}>
+                    {loading ? 'Processing...' : 'Clock In'}
+                  </Text>
+                </AnimatedButton>
+              )}
 
-              <AnimatedButton
-                colors={['#ff6b6b', '#c0392b']}
-                onPress={handleClockOut}
-                disabled={loading || (!overrideMode && !locationVerified)}
-              >
-                <Text style={styles.clockButtonText}>
-                  {loading ? 'Processing...' : 'Clock Out'}
-                </Text>
-              </AnimatedButton>
+              {/* Show Clock Out button when in clockout tab or for staff (who see both) */}
+              {(activeTab === 'clockout' || isStaff) && (
+                <AnimatedButton
+                  colors={['#ff6b6b', '#c0392b']}
+                  onPress={handleClockOut}
+                  disabled={loading || (!overrideMode && !locationVerified)}
+                  style={!isStaff ? styles.fullWidthButton : undefined}
+                >
+                  <Text style={styles.clockButtonText}>
+                    {loading ? 'Processing...' : 'Clock Out'}
+                  </Text>
+                </AnimatedButton>
+              )}
             </View>
           </CardContent>
         </Card>
@@ -1173,16 +1317,34 @@ const styles = StyleSheet.create({
   verifiedButton: {
     backgroundColor: '#6c757d',
   },
+  verifyingButton: {
+    backgroundColor: '#007AFF',
+  },
   verifyButtonText: {
     color: 'white',
     fontSize: 16,
     fontWeight: '600',
+  },
+  verificationStatusContainer: {
+    backgroundColor: '#e3f2fd',
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: '#90caf9',
+  },
+  verificationStatusText: {
+    color: '#1565c0',
+    fontSize: 14,
+    fontWeight: '500',
+    textAlign: 'center',
   },
   switchContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 16,
+    marginTop: 16,
   },
   buttonRow: {
     flexDirection: 'row',
@@ -1280,6 +1442,40 @@ const styles = StyleSheet.create({
     color: '#ff6b6b',
     marginTop: 4,
     fontStyle: 'italic',
+  },
+  tabContainer: {
+    flexDirection: 'row',
+    marginHorizontal: 16,
+    marginBottom: 8,
+    backgroundColor: '#e2e8f0',
+    borderRadius: 12,
+    padding: 4,
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: 'center',
+    borderRadius: 10,
+  },
+  tabActive: {
+    backgroundColor: 'white',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  tabText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#64748b',
+  },
+  tabTextActive: {
+    color: '#007AFF',
+    fontWeight: '600',
+  },
+  fullWidthButton: {
+    flex: 1,
   },
 });
 

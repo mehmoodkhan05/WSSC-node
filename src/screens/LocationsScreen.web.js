@@ -8,7 +8,7 @@ import { Label } from '../components/ui/Label';
 import { Textarea } from '../components/ui/Textarea';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/Dialog';
 // Removed lucide-react and sonner
-import { fetchLocations, createLocation, updateLocation, deleteLocation, NCLocation } from '../lib/locations.js';
+import { fetchLocations, createLocation, updateLocation, deleteLocation, checkLocationCanDelete } from '../lib/locations.js';
 
 export default function Locations() {
   const navigation = useNavigation();
@@ -20,13 +20,14 @@ export default function Locations() {
     center_lat: '40.7128',
     center_lng: '-74.0060',
     radius_meters: '500',
-    morning_shift_start: '09:00',
-    morning_shift_end: '17:00',
-    night_shift_start: '22:00',
-    night_shift_end: '06:00',
+    morning_shift_start: '08:00',
+    morning_shift_end: '20:00',
+    night_shift_start: '20:00',
+    night_shift_end: '08:00',
   });
   const [isOpen, setIsOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
+  const [locationDeletability, setLocationDeletability] = useState({});
 
   const resetForm = () => {
     setFormData({
@@ -36,10 +37,10 @@ export default function Locations() {
       center_lat: '40.7128',
       center_lng: '-74.0060',
       radius_meters: '500',
-      morning_shift_start: '09:00',
-      morning_shift_end: '17:00',
-      night_shift_start: '22:00',
-      night_shift_end: '06:00',
+      morning_shift_start: '08:00',
+      morning_shift_end: '20:00',
+      night_shift_start: '20:00',
+      night_shift_end: '08:00',
     });
     setEditingId(null);
   };
@@ -52,9 +53,25 @@ export default function Locations() {
     try {
       const data = await fetchLocations();
       setLocations(data);
+      // Check deletability for each location
+      checkAllLocationsDeletability(data);
     } catch (error) {
       console.error('Error loading locations:', error);
     }
+  };
+
+  const checkAllLocationsDeletability = async (locationsList) => {
+    const deletabilityMap = {};
+    for (const location of locationsList) {
+      try {
+        const result = await checkLocationCanDelete(location.id);
+        deletabilityMap[location.id] = result;
+      } catch (error) {
+        console.error(`Error checking deletability for location ${location.id}:`, error);
+        deletabilityMap[location.id] = { canDelete: false, reason: 'Unable to verify' };
+      }
+    }
+    setLocationDeletability(deletabilityMap);
   };
 
   const handleSubmit = async () => { // Removed e: React.FormEvent and e.preventDefault()
@@ -322,11 +339,20 @@ export default function Locations() {
                     <Text style={styles.editButtonText}>Edit</Text>
                   </Button>
                   <Button
-                    variant="destructive"
+                    variant={locationDeletability[location.id]?.canDelete === false ? "outline" : "destructive"}
                     size="sm"
                     onPress={() => handleDelete(location.id)}
+                    disabled={locationDeletability[location.id]?.canDelete === false}
+                    style={locationDeletability[location.id]?.canDelete === false && styles.buttonDisabled}
                   >
-                    <Text style={styles.deleteButtonText}>Delete</Text>
+                    <Text style={[
+                      styles.deleteButtonText,
+                      locationDeletability[location.id]?.canDelete === false && styles.buttonTextDisabled
+                    ]}>
+                      {locationDeletability[location.id]?.canDelete === false 
+                        ? 'Has Assignments' 
+                        : 'Delete'}
+                    </Text>
                   </Button>
                 </View>
               </CardContent>
@@ -581,5 +607,13 @@ const styles = StyleSheet.create({
   },
   boldText: {
     fontWeight: 'bold',
+  },
+  buttonDisabled: {
+    opacity: 0.6,
+    backgroundColor: '#e5e7eb',
+    borderColor: '#d1d5db',
+  },
+  buttonTextDisabled: {
+    color: '#9ca3af',
   },
 });
