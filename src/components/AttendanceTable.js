@@ -1,10 +1,16 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Platform, TextInput } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 
 const AttendanceTable = ({ records, title, pageSize = 10 }) => {
   const [expandedTabs, setExpandedTabs] = useState(new Set()); // Track which tabs are expanded
   const [searchQuery, setSearchQuery] = useState('');
+  const [currentPages, setCurrentPages] = useState({
+    all: 1,
+    present: 1,
+    absent: 1,
+    'on-leave': 1,
+  }); // Track current page per tab
 
   // Get records for a specific tab
   const getRecordsForTab = (tab) => {
@@ -65,6 +71,50 @@ const AttendanceTable = ({ records, title, pageSize = 10 }) => {
     });
   };
 
+  // Reset page when search query changes
+  const handleSearchChange = (text) => {
+    setSearchQuery(text);
+    setCurrentPages({
+      all: 1,
+      present: 1,
+      absent: 1,
+      'on-leave': 1,
+    });
+  };
+
+  // Get paginated records for a tab
+  const getPaginatedRecords = (tab) => {
+    const allRecords = getRecordsForTab(tab);
+    const currentPage = currentPages[tab] || 1;
+    const startIndex = (currentPage - 1) * pageSize;
+    const endIndex = startIndex + pageSize;
+    return {
+      records: allRecords.slice(startIndex, endIndex),
+      totalRecords: allRecords.length,
+      totalPages: Math.ceil(allRecords.length / pageSize),
+      currentPage,
+      startIndex: startIndex + 1,
+      endIndex: Math.min(endIndex, allRecords.length),
+    };
+  };
+
+  // Handle page change for a specific tab
+  const handlePageChange = (tab, direction) => {
+    setCurrentPages(prev => {
+      const currentPage = prev[tab] || 1;
+      const { totalPages } = getPaginatedRecords(tab);
+      let newPage = currentPage;
+      
+      if (direction === 'next' && currentPage < totalPages) {
+        newPage = currentPage + 1;
+      } else if (direction === 'prev' && currentPage > 1) {
+        newPage = currentPage - 1;
+      }
+      
+      return { ...prev, [tab]: newPage };
+    });
+  };
+
   const tabOptions = [
     { value: 'all', label: 'All', count: records?.length || 0 },
     { value: 'present', label: 'Present', count: presentCount },
@@ -84,13 +134,13 @@ const AttendanceTable = ({ records, title, pageSize = 10 }) => {
           placeholder="Search by name or ID..."
           placeholderTextColor="#999"
           value={searchQuery}
-          onChangeText={setSearchQuery}
+          onChangeText={handleSearchChange}
           autoCapitalize="none"
           autoCorrect={false}
         />
         {searchQuery.length > 0 && (
           <TouchableOpacity
-            onPress={() => setSearchQuery('')}
+            onPress={() => handleSearchChange('')}
             style={styles.clearButton}
           >
             <Feather name="x" size={18} color="#666" />
@@ -102,8 +152,8 @@ const AttendanceTable = ({ records, title, pageSize = 10 }) => {
       <View style={styles.tabsAccordionContainer}>
         {tabOptions.map((tab) => {
           const isExpanded = expandedTabs.has(tab.value);
-          const tabRecords = getRecordsForTab(tab.value);
-          const hasTabRecords = tabRecords && tabRecords.length > 0;
+          const pagination = getPaginatedRecords(tab.value);
+          const hasTabRecords = pagination.totalRecords > 0;
 
           return (
             <View key={tab.value} style={styles.tabAccordionItem}>
@@ -134,8 +184,8 @@ const AttendanceTable = ({ records, title, pageSize = 10 }) => {
                     </View>
                   ) : (
                     <View>
-                      {tabRecords.map((record, index) => {
-                        const isLastItem = index === tabRecords.length - 1;
+                      {pagination.records.map((record, index) => {
+                        const isLastItem = index === pagination.records.length - 1;
                         return (
                           <React.Fragment key={record.id ?? `${tab.value}-${index}`}>
                             <View style={styles.attendanceItem}>
@@ -185,6 +235,56 @@ const AttendanceTable = ({ records, title, pageSize = 10 }) => {
                           </React.Fragment>
                         );
                       })}
+
+                      {/* Pagination Controls */}
+                      {pagination.totalPages > 1 && (
+                        <View style={styles.paginationContainer}>
+                          <TouchableOpacity
+                            style={[
+                              styles.paginationButton,
+                              pagination.currentPage === 1 && styles.paginationButtonDisabled,
+                            ]}
+                            onPress={() => handlePageChange(tab.value, 'prev')}
+                            disabled={pagination.currentPage === 1}
+                          >
+                            <Text
+                              style={[
+                                styles.paginationButtonText,
+                                pagination.currentPage === 1 && styles.paginationButtonTextDisabled,
+                              ]}
+                            >
+                              Previous
+                            </Text>
+                          </TouchableOpacity>
+
+                          <View style={styles.paginationInfo}>
+                            <Text style={styles.paginationText}>
+                              Page {pagination.currentPage} of {pagination.totalPages}
+                            </Text>
+                            <Text style={styles.paginationSubtext}>
+                              Showing {pagination.startIndex}-{pagination.endIndex} of {pagination.totalRecords}
+                            </Text>
+                          </View>
+
+                          <TouchableOpacity
+                            style={[
+                              styles.paginationButton,
+                              pagination.currentPage === pagination.totalPages && styles.paginationButtonDisabled,
+                            ]}
+                            onPress={() => handlePageChange(tab.value, 'next')}
+                            disabled={pagination.currentPage === pagination.totalPages}
+                          >
+                            <Text
+                              style={[
+                                styles.paginationButtonText,
+                                pagination.currentPage === pagination.totalPages && styles.paginationButtonTextDisabled,
+                              ]}
+                            >
+                              Next
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      )}
                     </View>
                   )}
                 </View>
@@ -247,6 +347,7 @@ const styles = StyleSheet.create({
     marginLeft: 4,
   },
   attendanceItem: {
+    padding: 15,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -332,20 +433,21 @@ const styles = StyleSheet.create({
     color: '#666',
   },
   paginationContainer: {
+    padding: 15,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginTop: 16,
-    paddingTop: 12,
     borderTopWidth: 1,
     borderTopColor: '#f0f0f0',
   },
   paginationButton: {
+    opacity: 0.9,
     paddingHorizontal: 16,
     paddingVertical: 10,
-    borderRadius: 8,
+    borderRadius: 15,
     backgroundColor: '#007AFF',
-    minWidth: 100,
+    minWidth: 80,
     alignItems: 'center',
   },
   paginationButtonDisabled: {
@@ -364,7 +466,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   paginationText: {
-    fontSize: 14,
+    fontSize: 10,
     fontWeight: '600',
     color: '#333',
   },

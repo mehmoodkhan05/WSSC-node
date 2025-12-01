@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Dimensions } from 'react-native';
+
+const { width: screenWidth } = Dimensions.get('window');
 import { Feather } from '@expo/vector-icons';
 import { useAuth } from '../../contexts/AuthContext';
 import { normalizeRole, hasFullControl, ROLE, ROLE_OPTIONS, getRoleLabel } from '../../lib/roles';
@@ -360,7 +362,14 @@ const AdminDashboard = ({ stats, records, roleDepartmentStats = {} }) => {
               {roleDepartmentStats.byRoleAndDepartment && roleDepartmentStats.byRoleAndDepartment.length > 0 && (
                 <View style={styles.overviewSection}>
                   <Text style={styles.overviewSectionTitle}>Role × Department Matrix</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.matrixScroll}>
+                  <ScrollView 
+                    horizontal 
+                    showsHorizontalScrollIndicator={false} 
+                    style={styles.matrixScroll}
+                    pagingEnabled={false}
+                    snapToInterval={27}
+                    decelerationRate="fast"
+                  >
                     <View style={styles.matrixContainer}>
                       {roleDepartmentStats.byRoleAndDepartment.map((item, index) => {
                         const roleOption = ROLE_OPTIONS.find(r => r.value === item.role);
@@ -695,23 +704,24 @@ const styles = StyleSheet.create({
     color: '#007AFF',
   },
   matrixScroll: {
-    marginHorizontal: -12,
+    marginHorizontal: 0,
   },
   matrixContainer: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 4,
   },
   matrixItem: {
     backgroundColor: '#f0f9ff',
     borderWidth: 1,
     borderColor: '#bae6fd',
-    borderRadius: 8,
-    padding: 12,
-    marginRight: 8,
-    marginBottom: 8,
-    minWidth: 120,
+    borderRadius: 20,
+    padding: 16,
+    marginRight: 12,
+    width: (screenWidth - 100) / 2, // 2 cards visible, accounting for margins and padding
     alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 90,
   },
   matrixRole: {
     fontSize: 12,

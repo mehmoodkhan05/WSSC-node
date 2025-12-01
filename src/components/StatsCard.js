@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import Feather from 'react-native-vector-icons/Feather'; // Using Feather icons as an example
+// Icon component is passed as prop from parent
 
 const StatsCard = ({ title, value, icon: IconComponent, iconName, color = '#007AFF' }) => (
   <View style={[styles.statCard, { borderLeftColor: color }]}>
