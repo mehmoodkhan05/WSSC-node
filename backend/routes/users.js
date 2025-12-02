@@ -42,8 +42,8 @@ router.get('/', protect, async (req, res) => {
       created_at: user.createdAt,
       department: user.department || null,
       departments: user.departments || [],
-      manager_id: user.managerId || null,
-      general_manager_id: user.generalManagerId || null,
+      manager_id: user.managerId?.toString() || null,
+      general_manager_id: user.generalManagerId?.toString() || null,
       emp_fname: user.empFname || null,
       emp_deptt: user.empDeptt || null,
       emp_job: user.empJob || null,
@@ -86,8 +86,8 @@ router.get('/staff', protect, async (req, res) => {
       email: user.email,
       full_name: user.fullName,
       department: user.department || null,
-      manager_id: user.managerId || null,
-      supervisor_id: user.supervisorId || null,
+      manager_id: user.managerId?.toString() || null,
+      supervisor_id: user.supervisorId?.toString() || null,
       empNo: user.empNo || null
     }));
 
@@ -119,7 +119,7 @@ router.get('/supervisors', protect, async (req, res) => {
       email: user.email,
       full_name: user.fullName,
       department: user.department || null,
-      manager_id: user.managerId || null
+      manager_id: user.managerId?.toString() || null
     }));
 
     res.json({
@@ -151,8 +151,8 @@ router.get('/managers', protect, async (req, res) => {
       full_name: user.fullName,
       department: user.department || null,
       departments: user.departments || [],
-      general_manager_id: user.generalManagerId || null,
-      manager_id: user.managerId || null
+      general_manager_id: user.generalManagerId?.toString() || null,
+      manager_id: user.managerId?.toString() || null
     }));
 
     res.json({
@@ -184,13 +184,48 @@ router.get('/general-managers', protect, async (req, res) => {
       full_name: user.fullName,
       department: user.department || null,
       departments: user.departments || [],
-      general_manager_id: user.generalManagerId || null,
-      manager_id: user.managerId || null
+      general_manager_id: user.generalManagerId?.toString() || null,
+      manager_id: user.managerId?.toString() || null
     }));
 
     res.json({
       success: true,
       data: formattedGMs
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// @route   GET /api/users/executives
+// @desc    Get all CEO and Super Admin users
+// @access  Private
+router.get('/executives', protect, async (req, res) => {
+  try {
+    const executives = await User.find({ 
+      role: { $in: ['ceo', 'super_admin'] }, 
+      isActive: true 
+    })
+      .sort({ fullName: 1 })
+      .limit(100)
+      .select('-password');
+
+    const formattedExecutives = executives.map(user => ({
+      user_id: user._id,
+      name: user.fullName || user.username || 'Unknown',
+      email: user.email,
+      full_name: user.fullName,
+      role: user.role,
+      department: user.department || null,
+      departments: user.departments || []
+    }));
+
+    res.json({
+      success: true,
+      data: formattedExecutives
     });
   } catch (error) {
     res.status(500).json({

@@ -43,6 +43,16 @@ export async function fetchGeneralManagers() {
   }
 }
 
+export async function fetchExecutives() {
+  try {
+    const response = await apiClient.get('/users/executives');
+    return response.data || [];
+  } catch (error) {
+    console.error('Error fetching executives:', error);
+    throw error;
+  }
+}
+
 // Fetch all profiles (admin function)
 export async function fetchProfiles(includeInactive = false) {
   try {

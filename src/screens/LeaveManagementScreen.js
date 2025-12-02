@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { useAuth } from '../contexts/AuthContext';
 import { getProfile } from '../lib/auth';
-import { fetchStaff, fetchSupervisors, fetchManagers, fetchGeneralManagers } from '../lib/staff';
+import { fetchStaff, fetchSupervisors, fetchManagers, fetchGeneralManagers, fetchExecutives } from '../lib/staff';
 import { fetchAssignments } from '../lib/assignments';
 import { fetchLeaveRequests, createLeaveRequest, updateLeaveRequestStatus } from '../lib/leaveRequests';
 import SimpleDropdown from '../components/ui/SimpleDropdown';
@@ -37,6 +37,7 @@ const LeaveManagementScreen = () => {
   const [supervisors, setSupervisors] = useState([]);
   const [managers, setManagers] = useState([]);
   const [generalManagers, setGeneralManagers] = useState([]);
+  const [executives, setExecutives] = useState([]); // CEO and Super Admin users
   const [assignments, setAssignments] = useState([]);
   const [currentUserId, setCurrentUserId] = useState('');
   const [currentUserRole, setCurrentUserRole] = useState('staff');
@@ -71,11 +72,12 @@ const LeaveManagementScreen = () => {
       setLoading(true);
       
       // Fetch all data in parallel, but handle individual errors
-      const [stfResult, supsResult, mgrsResult, gMgrsResult, asgsResult, userProfileResult, requestsResult] = await Promise.allSettled([
+      const [stfResult, supsResult, mgrsResult, gMgrsResult, execsResult, asgsResult, userProfileResult, requestsResult] = await Promise.allSettled([
         fetchStaff(),
         fetchSupervisors(),
         fetchManagers(),
         fetchGeneralManagers(),
+        fetchExecutives(),
         fetchAssignments(),
         getProfile(),
         fetchLeaveRequests(),
@@ -86,6 +88,7 @@ const LeaveManagementScreen = () => {
       const sups = supsResult.status === 'fulfilled' ? supsResult.value : [];
       const mgrs = mgrsResult.status === 'fulfilled' ? mgrsResult.value : [];
       const gMgrs = gMgrsResult.status === 'fulfilled' ? gMgrsResult.value : [];
+      const execs = execsResult.status === 'fulfilled' ? execsResult.value : [];
       const asgs = asgsResult.status === 'fulfilled' ? asgsResult.value : [];
       const userProfile = userProfileResult.status === 'fulfilled' ? userProfileResult.value : null;
       const requests = requestsResult.status === 'fulfilled' ? requestsResult.value : [];
@@ -95,6 +98,7 @@ const LeaveManagementScreen = () => {
       if (supsResult.status === 'rejected') console.warn('Failed to load supervisors:', supsResult.reason);
       if (mgrsResult.status === 'rejected') console.warn('Failed to load managers:', mgrsResult.reason);
       if (gMgrsResult.status === 'rejected') console.warn('Failed to load general managers:', gMgrsResult.reason);
+      if (execsResult.status === 'rejected') console.warn('Failed to load executives:', execsResult.reason);
       if (asgsResult.status === 'rejected') console.warn('Failed to load assignments:', asgsResult.reason);
       if (userProfileResult.status === 'rejected') console.warn('Failed to load user profile:', userProfileResult.reason);
       if (requestsResult.status === 'rejected') console.warn('Failed to load leave requests:', requestsResult.reason);
@@ -103,6 +107,7 @@ const LeaveManagementScreen = () => {
       setSupervisors(sups || []);
       setManagers(mgrs || []);
       setGeneralManagers(gMgrs || []);
+      setExecutives(execs || []);
       setAssignments(asgs || []);
       setLeaveRequests(requests || []);
       
@@ -156,12 +161,8 @@ const LeaveManagementScreen = () => {
         if (userId) {
           setSelectedStaff(userId);
           // Find a CEO or Super Admin to be the approver
-          const allStaff = stf || [];
-          const ceoOrSuperAdmin = allStaff.find(s => 
-            normalizeRole(s.role) === ROLE.CEO || normalizeRole(s.role) === ROLE.SUPER_ADMIN
-          );
-          if (ceoOrSuperAdmin) {
-            setSelectedSupervisor(ceoOrSuperAdmin.user_id);
+          if (execs && execs.length > 0) {
+            setSelectedSupervisor(execs[0].user_id);
           }
         }
       } else if (hasFullControl(normalizedRole)) {
@@ -194,22 +195,31 @@ const LeaveManagementScreen = () => {
       // Managers and GMs submit for themselves
       staffIdForRequest = currentUserId;
       if (isManagerRole) {
-        // Manager's leave needs GM approval
+        // Manager's leave needs department GM approval
         if (generalManagers && generalManagers.length > 0) {
-          supervisorIdForRequest = generalManagers[0].user_id;
+          // Find the GM assigned to this manager's department
+          const managerUser = managers.find(m => m.user_id === currentUserId);
+          const managerDept = managerUser?.department || currentUserDepartment;
+          
+          // Find GM who has this department in their departments array
+          const deptGM = generalManagers.find(gm => 
+            gm.departments && gm.departments.includes(managerDept)
+          );
+          
+          if (deptGM) {
+            supervisorIdForRequest = deptGM.user_id;
+          } else {
+            // Fallback to first GM if no department-specific GM found
+            supervisorIdForRequest = generalManagers[0].user_id;
+          }
         } else {
           Alert.alert('Error', 'No General Manager found to approve your leave request.');
           return;
         }
       } else if (isGeneralManagerRole) {
         // GM's leave needs CEO/SuperAdmin approval
-        const allStaff = staff || [];
-        const ceoOrSuperAdmin = allStaff.find(s => {
-          const role = normalizeRole(s.role);
-          return role === ROLE.CEO || role === ROLE.SUPER_ADMIN;
-        });
-        if (ceoOrSuperAdmin) {
-          supervisorIdForRequest = ceoOrSuperAdmin.user_id;
+        if (executives && executives.length > 0) {
+          supervisorIdForRequest = executives[0].user_id;
         } else {
           Alert.alert('Error', 'No CEO or Super Admin found to approve your leave request.');
           return;
@@ -219,10 +229,15 @@ const LeaveManagementScreen = () => {
       // Supervisor submitting leave for themselves
       staffIdForRequest = currentUserId; // The supervisor is the one requesting leave
       
-      // Find a manager to approve the supervisor's leave
-      if (managers && managers.length > 0) {
-        // Try to find a manager in the same department
-        const supervisorUser = supervisors.find(s => s.user_id === currentUserId);
+      // Find the manager assigned to this supervisor (from their manager_id field)
+      const supervisorUser = supervisors.find(s => s.user_id === currentUserId);
+      const assignedManagerId = supervisorUser?.manager_id;
+      
+      if (assignedManagerId) {
+        // Use the directly assigned manager
+        supervisorIdForRequest = assignedManagerId;
+      } else if (managers && managers.length > 0) {
+        // Fallback: Try to find a manager in the same department
         const supervisorDept = supervisorUser?.department;
         const deptManager = managers.find(m => m.department === supervisorDept);
         supervisorIdForRequest = deptManager ? deptManager.user_id : managers[0].user_id;
@@ -1029,9 +1044,31 @@ const LeaveManagementScreen = () => {
                     {request.staff_department && (
                       <Text style={styles.departmentName}>Dept: {request.staff_department}</Text>
                     )}
-                    {request.supervisor_name && (
-                      <Text style={styles.supervisorName}>Supervisor: {request.supervisor_name}</Text>
-                    )}
+                    {/* Show assigned supervisor/manager based on requester's role */}
+                    {(() => {
+                      const staffRole = normalizeRole(request.staff_role);
+                      // For managers and above, don't show superior name
+                      if (staffRole === ROLE.MANAGER || staffRole === ROLE.GENERAL_MANAGER) {
+                        return null;
+                      }
+                      // For supervisors, show their assigned manager
+                      if (staffRole === ROLE.SUPERVISOR && request.supervisor_name) {
+                        return (
+                          <Text style={styles.supervisorName}>
+                            Manager: {request.supervisor_name}
+                          </Text>
+                        );
+                      }
+                      // For staff, show their assigned supervisor
+                      if (request.supervisor_name) {
+                        return (
+                          <Text style={styles.supervisorName}>
+                            Supervisor: {request.supervisor_name}
+                          </Text>
+                        );
+                      }
+                      return null;
+                    })()}
                   </View>
                   <View style={[styles.statusBadge, { backgroundColor: getStatusColor(request.status) }]}>
                     <Text style={styles.statusText}>{request.status?.toUpperCase() || 'PENDING'}</Text>

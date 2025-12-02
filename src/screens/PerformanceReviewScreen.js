@@ -19,7 +19,8 @@ import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useAuth } from '../contexts/AuthContext';
 import { getProfile } from '../lib/auth';
-import { fetchStaff, fetchSupervisors } from '../lib/staff';
+import { fetchStaff, fetchSupervisors, fetchManagers, fetchGeneralManagers } from '../lib/staff';
+import { fetchAssignments } from '../lib/assignments';
 import { fetchLocations } from '../lib/locations';
 import { fetchPerformanceReviews, createPerformanceReview, deletePerformanceReview, uploadPerformancePhotos, generatePerformancePDF, updatePerformanceReviewPDF } from '../lib/performance';
 import { PARSE_CLASSES } from '../lib/apiClient';
@@ -100,10 +101,15 @@ const PerformanceReviewScreen = () => {
 
   const currentUserId = currentUser?.user_id ?? currentUser?.id ?? currentUser?.objectId ?? null;
   const currentRole = normalizeRole(currentUser?.role) || ROLE.STAFF;
+  const currentUserDepartment = currentUser?.department || null;
+  const currentUserDepartments = currentUser?.departments || [];
   const isSupervisorOnly = currentRole === ROLE.SUPERVISOR;
-  const hasOrgWideAccess = hasManagementPrivileges(currentRole);
+  const isManagerRole = currentRole === ROLE.MANAGER;
+  const isGeneralManagerRole = currentRole === ROLE.GENERAL_MANAGER;
+  const isCEOOrSuperAdmin = currentRole === ROLE.CEO || currentRole === ROLE.SUPER_ADMIN;
+  const hasOrgWideAccess = isCEOOrSuperAdmin; // Only CEO/SuperAdmin sees everything
   const canSubmitReports = currentRole === ROLE.STAFF || currentRole === ROLE.SUPERVISOR;
-  const canDeleteReports = hasOrgWideAccess;
+  const canDeleteReports = hasManagementPrivileges(currentRole);
 
   useEffect(() => {
     loadInitialData();
@@ -129,73 +135,154 @@ useEffect(() => {
     
     setLoading(true);
     try {
-      const [locs, allStaff, supervisors] = await Promise.all([
+      const [locs, allStaff, supervisors, managers, generalManagers, assignments] = await Promise.all([
         fetchLocations(),
         fetchStaff(),
-        fetchSupervisors()
+        fetchSupervisors(),
+        fetchManagers(),
+        fetchGeneralManagers(),
+        fetchAssignments()
       ]);
       
       setLocations(locs || []);
       setStaffList(allStaff || []);
       setSupervisorsList(supervisors || []);
 
-      // Normalize staff objects
+      // Normalize staff objects with department info
       const allStaffNormalized = (allStaff || []).map(s => ({
         user_id: s.user_id || '',
         name: s.name || s.full_name || (s.email ? s.email.split('@')[0] : 'Staff'),
         email: s.email || null,
+        department: s.department || null,
+        manager_id: s.manager_id || null,
       }));
 
-      // Fetch performance reviews
+      // Normalize supervisors with department and manager info
+      const supervisorsNormalized = (supervisors || []).map(s => ({
+        user_id: s.user_id || '',
+        name: s.full_name || s.name || (s.email ? s.email.split('@')[0] : 'Supervisor'),
+        email: s.email || null,
+        department: s.department || null,
+        manager_id: s.manager_id || null,
+      }));
+
+      // Fetch performance reviews - always fetch all for proper filtering
       let reviews = [];
       try {
-        if (hasOrgWideAccess) {
-          reviews = await fetchPerformanceReviews();
-        } else if (currentUserId) {
-          reviews = await fetchPerformanceReviews({ staffId: currentUserId });
-        }
+        reviews = await fetchPerformanceReviews();
       } catch (error) {
         console.error('Error fetching reviews:', error);
       }
 
       // Create maps for user lookup
       const staffMap = new Map(allStaffNormalized.map(s => [s.user_id, s]));
-      const supervisorMap = new Map((supervisors || []).map(s => [s.user_id, {
-        ...s,
-        name: s.full_name || (s.email ? s.email.split('@')[0] : s.user_id)
-      }]));
+      const supervisorMap = new Map(supervisorsNormalized.map(s => [s.user_id, s]));
 
-      // Initialize reportCounts based on user role
-      const reportCounts = new Map();
-
-      if (hasOrgWideAccess) {
-        // Admins see all staff and supervisor folders
-        allStaffNormalized.forEach(s => {
-          reportCounts.set(s.user_id, { count: 0, role: 'staff', name: s.name, locations: new Set() });
-        });
-        (supervisors || []).forEach(s => {
-          const supervisorName = s.full_name || (s.email ? s.email.split('@')[0] : s.user_id);
-          reportCounts.set(s.user_id, { count: 0, role: 'supervisor', name: supervisorName, locations: new Set() });
-        });
-      } else if (currentUserId) {
-        // Non-admins only see their own folder
-        const currentUserAsStaff = allStaffNormalized.find(s => s.user_id === currentUserId);
-        const currentUserAsSupervisor = (supervisors || []).find(s => s.user_id === currentUserId);
-
-        if (currentUserAsStaff) {
-          reportCounts.set(currentUserId, { count: 0, role: 'staff', name: currentUserAsStaff.name, locations: new Set() });
-        } else if (currentUserAsSupervisor) {
-          const supervisorName = currentUserAsSupervisor.full_name || (currentUserAsSupervisor.email ? currentUserAsSupervisor.email.split('@')[0] : currentUserAsSupervisor.user_id);
-          reportCounts.set(currentUserId, { count: 0, role: 'supervisor', name: supervisorName, locations: new Set() });
+      // Build set of staff assigned to each supervisor
+      const staffBySupervisor = new Map();
+      (assignments || []).forEach(a => {
+        if (a.is_active && a.supervisor_id && a.staff_id) {
+          if (!staffBySupervisor.has(a.supervisor_id)) {
+            staffBySupervisor.set(a.supervisor_id, new Set());
+          }
+          staffBySupervisor.get(a.supervisor_id).add(a.staff_id);
         }
+      });
+
+      // Build set of supervisors assigned to each manager
+      const supervisorsByManager = new Map();
+      supervisorsNormalized.forEach(s => {
+        if (s.manager_id) {
+          if (!supervisorsByManager.has(s.manager_id)) {
+            supervisorsByManager.set(s.manager_id, new Set());
+          }
+          supervisorsByManager.get(s.manager_id).add(s.user_id);
+        }
+      });
+
+      // Determine which user IDs this user can see based on their role
+      let visibleUserIds = new Set();
+
+      if (isCEOOrSuperAdmin) {
+        // CEO/Super Admin sees ALL folders
+        allStaffNormalized.forEach(s => visibleUserIds.add(s.user_id));
+        supervisorsNormalized.forEach(s => visibleUserIds.add(s.user_id));
+        (managers || []).forEach(m => visibleUserIds.add(m.user_id));
+        (generalManagers || []).forEach(gm => visibleUserIds.add(gm.user_id));
+      } else if (isGeneralManagerRole) {
+        // GM sees all users from their assigned department(s)
+        const gmDepts = currentUserDepartments.length > 0 ? currentUserDepartments : (currentUserDepartment ? [currentUserDepartment] : []);
+        
+        allStaffNormalized.forEach(s => {
+          if (s.department && gmDepts.includes(s.department)) {
+            visibleUserIds.add(s.user_id);
+          }
+        });
+        supervisorsNormalized.forEach(s => {
+          if (s.department && gmDepts.includes(s.department)) {
+            visibleUserIds.add(s.user_id);
+          }
+        });
+        (managers || []).forEach(m => {
+          if (m.department && gmDepts.includes(m.department)) {
+            visibleUserIds.add(m.user_id);
+          }
+        });
+        // GM also sees their own folder
+        visibleUserIds.add(currentUserId);
+      } else if (isManagerRole) {
+        // Manager sees their assigned supervisors and those supervisors' staff
+        const mySupervisors = supervisorsByManager.get(currentUserId) || new Set();
+        mySupervisors.forEach(supId => {
+          visibleUserIds.add(supId); // Add supervisor
+          const supStaff = staffBySupervisor.get(supId) || new Set();
+          supStaff.forEach(staffId => visibleUserIds.add(staffId)); // Add supervisor's staff
+        });
+        // Manager also sees their own folder
+        visibleUserIds.add(currentUserId);
+      } else if (isSupervisorOnly) {
+        // Supervisor sees only their assigned staff and their own folder
+        const myStaff = staffBySupervisor.get(currentUserId) || new Set();
+        myStaff.forEach(staffId => visibleUserIds.add(staffId));
+        visibleUserIds.add(currentUserId); // Add self
+      } else {
+        // Staff sees only their own folder
+        visibleUserIds.add(currentUserId);
       }
 
-      // Count reports per user
+      // Initialize reportCounts for visible users
+      const reportCounts = new Map();
+
+      // Add all visible users to reportCounts
+      visibleUserIds.forEach(userId => {
+        const staff = staffMap.get(userId);
+        const supervisor = supervisorMap.get(userId);
+        const manager = (managers || []).find(m => m.user_id === userId);
+        const gm = (generalManagers || []).find(g => g.user_id === userId);
+        
+        let name = 'Unknown';
+        let role = 'staff';
+        
+        if (staff) {
+          name = staff.name;
+          role = 'staff';
+        } else if (supervisor) {
+          name = supervisor.name;
+          role = 'supervisor';
+        } else if (manager) {
+          name = manager.full_name || manager.name || manager.email || 'Manager';
+          role = 'manager';
+        } else if (gm) {
+          name = gm.full_name || gm.name || gm.email || 'General Manager';
+          role = 'general_manager';
+        }
+        
+        reportCounts.set(userId, { count: 0, role, name, locations: new Set() });
+      });
+
+      // Count reports per user (only for visible users)
       reviews.forEach((record) => {
-        if (record.staff_id) {
-          if (!hasOrgWideAccess && currentUserId && record.staff_id !== currentUserId) {
-            return;
-          }
+        if (record.staff_id && visibleUserIds.has(record.staff_id)) {
           const existing = reportCounts.get(record.staff_id);
           if (existing) {
             existing.count += 1;
@@ -203,15 +290,6 @@ useEffect(() => {
               existing.locations.add(record.location_id);
             }
             reportCounts.set(record.staff_id, existing);
-          } else {
-            // Fallback: if submitter not in initial list
-            const staff = staffMap.get(record.staff_id);
-            const supervisor = supervisorMap.get(record.staff_id);
-            if (staff) {
-              reportCounts.set(record.staff_id, { count: 1, role: 'staff', name: staff.name, locations: new Set(record.location_id ? [record.location_id] : []) });
-            } else if (supervisor) {
-              reportCounts.set(record.staff_id, { count: 1, role: 'supervisor', name: supervisor.name, locations: new Set(record.location_id ? [record.location_id] : []) });
-            }
           }
         }
       });
@@ -225,18 +303,14 @@ useEffect(() => {
         locations: Array.from(data.locations)
       }));
 
-      const visibleFolders = isSupervisorOnly && currentUserId
-        ? folders.filter((folder) => folder.user_id === currentUserId)
-        : folders;
-
-      setUserFolders(visibleFolders.sort((a, b) => (a.name || '').localeCompare(b.name || '')));
+      setUserFolders(folders.sort((a, b) => (a.name || '').localeCompare(b.name || '')));
     } catch (error) {
       console.error('Error fetching user folders:', error);
       Alert.alert('Error', 'Failed to load user folders');
     } finally {
       setLoading(false);
     }
-  }, [currentUser, isSupervisorOnly, hasOrgWideAccess]);
+  }, [currentUser, isSupervisorOnly, isManagerRole, isGeneralManagerRole, isCEOOrSuperAdmin, currentUserId, currentUserDepartment, currentUserDepartments]);
 
   const onRefresh = async () => {
     setRefreshing(true);
