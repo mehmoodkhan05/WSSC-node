@@ -3,6 +3,7 @@ const router = express.Router();
 const LeaveRequest = require('../models/LeaveRequest');
 const User = require('../models/User');
 const { protect, authorize } = require('../middleware/auth');
+const { sendPushNotification } = require('./notifications');
 
 // @route   GET /api/leave
 // @desc    Get leave requests
@@ -90,7 +91,23 @@ router.post('/', protect, async (req, res) => {
     });
 
     const populated = await LeaveRequest.findById(request._id)
-      .populate('staffId', 'fullName username');
+      .populate('staffId', 'fullName username role managerId');
+
+    // Send push notification to the approver (supervisor_id)
+    if (supervisor_id) {
+      const staffName = populated.staffId?.fullName || populated.staffId?.username || 'A staff member';
+      try {
+        await sendPushNotification(
+          supervisor_id,
+          'New Leave Request',
+          `${staffName} has submitted a leave request for ${start_date} to ${end_date}. Please review.`,
+          { type: 'leave_request', requestId: request._id.toString() }
+        );
+      } catch (notifError) {
+        console.warn('Failed to send leave request notification:', notifError.message);
+        // Don't fail the request if notification fails
+      }
+    }
 
     res.status(201).json({
       success: true,
@@ -144,6 +161,24 @@ router.put('/:id/status', protect, authorize('ceo', 'super_admin', 'general_mana
     const populated = await LeaveRequest.findById(request._id)
       .populate('staffId', 'fullName username')
       .populate('approvedBy', 'fullName username');
+
+    // Send push notification to the staff member about the decision
+    const staffId = populated.staffId?._id;
+    if (staffId) {
+      const approverName = populated.approvedBy?.fullName || populated.approvedBy?.username || 'Management';
+      const statusText = status === 'approved' ? 'approved' : 'rejected';
+      try {
+        await sendPushNotification(
+          staffId.toString(),
+          `Leave Request ${status === 'approved' ? 'Approved' : 'Rejected'}`,
+          `Your leave request from ${request.startDate} to ${request.endDate} has been ${statusText} by ${approverName}.`,
+          { type: 'leave_status_update', requestId: request._id.toString(), status }
+        );
+      } catch (notifError) {
+        console.warn('Failed to send leave status notification:', notifError.message);
+        // Don't fail the request if notification fails
+      }
+    }
 
     res.json({
       success: true,

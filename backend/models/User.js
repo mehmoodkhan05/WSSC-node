@@ -64,6 +64,14 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  expoPushToken: {
+    type: String,
+    default: null
+  },
+  pushNotificationsEnabled: {
+    type: Boolean,
+    default: false
+  },
   isActive: {
     type: Boolean,
     default: true
