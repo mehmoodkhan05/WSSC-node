@@ -27,7 +27,7 @@ const userSchema = new mongoose.Schema({
   role: {
     type: String,
     required: true,
-    enum: ['staff', 'supervisor', 'manager', 'general_manager', 'ceo', 'super_admin'],
+    enum: ['staff', 'supervisor', 'sub_engineer', 'manager', 'general_manager', 'ceo', 'super_admin'],
     default: 'staff'
   },
   department: {
@@ -60,6 +60,25 @@ const userSchema = new mongoose.Schema({
   empGender: String,
   empNo: String,
   empCnic: String,
+  // Shift fields
+  shiftDays: {
+    type: Number,
+    enum: [5, 6],
+    default: 6
+  },
+  shiftTime: {
+    type: String,
+    enum: ['day', 'night', 'custom'],
+    default: 'day'
+  },
+  shiftStartTime: {
+    type: String, // Format: "HH:MM"
+    default: '09:00'
+  },
+  shiftEndTime: {
+    type: String, // Format: "HH:MM"
+    default: '17:00'
+  },
   profilePhotoUrl: {
     type: String,
     default: null

@@ -289,12 +289,15 @@ Parse.Cloud.define('deleteLocation', async (request) => {
 Parse.Cloud.define('getDashboardStats', async (request) => {
   try {
     // Fetch counts using master key to bypass ACL restrictions
-    const [totalStaffCount, supervisorCount, pendingLeaveRequestsCount] = await Promise.all([
+    const [totalStaffCount, supervisorCount, subEngineerCount, pendingLeaveRequestsCount] = await Promise.all([
       new Parse.Query(Parse.User)
         .equalTo('role', 'staff')
         .count({ useMasterKey: true }),
       new Parse.Query(Parse.User)
         .equalTo('role', 'supervisor')
+        .count({ useMasterKey: true }),
+      new Parse.Query(Parse.User)
+        .equalTo('role', 'sub_engineer')
         .count({ useMasterKey: true }),
       new Parse.Query('LeaveRequest')
         .equalTo('status', 'pending')
@@ -304,6 +307,7 @@ Parse.Cloud.define('getDashboardStats', async (request) => {
     return {
       totalStaff: totalStaffCount || 0,
       supervisorCount: supervisorCount || 0,
+      subEngineerCount: subEngineerCount || 0,
       pendingLeaveRequestsCount: pendingLeaveRequestsCount || 0
     };
   } catch (error) {
@@ -713,8 +717,8 @@ Parse.Cloud.define('fetchLeadershipAttendance', async (request) => {
     const todayStr = today.toISOString().split('T')[0];
     const tomorrowStr = tomorrow.toISOString().split('T')[0];
 
-    // Fetch all users with leadership roles (manager, general_manager, supervisor)
-    const leadershipRoles = ['manager', 'general_manager', 'supervisor'];
+    // Fetch all users with leadership roles (all roles above staff)
+    const leadershipRoles = ['supervisor', 'sub_engineer', 'manager', 'general_manager'];
     const leadershipQuery = new Parse.Query(Parse.User);
     leadershipQuery.containedIn('role', leadershipRoles);
     leadershipQuery.equalTo('isActive', true);
@@ -825,8 +829,8 @@ Parse.Cloud.define('fetchLeadershipAttendance', async (request) => {
       };
     });
 
-    // Sort by role (General Manager, Manager, Supervisor) then by name
-    const roleOrder = { general_manager: 1, manager: 2, supervisor: 3 };
+    // Sort by role (General Manager, Manager, Sub Engineer/Supervisor) then by name
+    const roleOrder = { general_manager: 1, manager: 2, sub_engineer: 3, supervisor: 3 };
     result.sort((a, b) => {
       const roleDiff = (roleOrder[a.role] || 99) - (roleOrder[b.role] || 99);
       if (roleDiff !== 0) return roleDiff;

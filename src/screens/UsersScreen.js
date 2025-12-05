@@ -50,6 +50,10 @@ const UsersScreen = () => {
   const [empFlg, setEmpFlg] = useState('');
   const [empMarried, setEmpMarried] = useState('');
   const [empGender, setEmpGender] = useState('');
+  const [shiftDays, setShiftDays] = useState('6');
+  const [shiftTime, setShiftTime] = useState('day');
+  const [shiftStartTime, setShiftStartTime] = useState('09:00');
+  const [shiftEndTime, setShiftEndTime] = useState('17:00');
   const [role, setRole] = useState(ROLE.STAFF);
   const [showRoleModal, setShowRoleModal] = useState(false);
   const [selectedUserForRole, setSelectedUserForRole] = useState(null);
@@ -156,6 +160,10 @@ const UsersScreen = () => {
           empFlg: empFlg || null,
           empMarried: empMarried || null,
           empGender: empGender || null,
+          shiftDays: parseInt(shiftDays) || 6,
+          shiftTime: shiftTime || 'day',
+          shiftStartTime: shiftStartTime || '09:00',
+          shiftEndTime: shiftEndTime || '17:00',
         }
       );
       Alert.alert('Success', 'User created');
@@ -174,6 +182,10 @@ const UsersScreen = () => {
       setEmpFlg('');
       setEmpMarried('');
       setEmpGender('');
+      setShiftDays('6');
+      setShiftTime('day');
+      setShiftStartTime('09:00');
+      setShiftEndTime('17:00');
       setRole(ROLE.STAFF);
       await load();
       return response;
@@ -230,6 +242,10 @@ const UsersScreen = () => {
     setEmpFlg(user.emp_flg || '');
     setEmpMarried(user.emp_married || '');
     setEmpGender(user.emp_gender || '');
+    setShiftDays(user.shift_days?.toString() || '6');
+    setShiftTime(user.shift_time || 'day');
+    setShiftStartTime(user.shift_start_time || '09:00');
+    setShiftEndTime(user.shift_end_time || '17:00');
     setRole(user.role || ROLE.STAFF);
     setPassword(''); // Don't pre-fill password
     setIsActive(user.is_active !== false); // Default to true if not set
@@ -529,6 +545,62 @@ const UsersScreen = () => {
             selectedValue={empGender}
             onValueChange={setEmpGender}
             placeholder="Select Gender"
+          />
+        </View>
+
+        <View style={styles.inputContainer}>
+          <Text style={styles.inputLabel}>Shift Days *</Text>
+          <SimpleDropdown
+            options={[
+              { label: '5 Days (Sat & Sun Off)', value: '5' },
+              { label: '6 Days (Sun Off)', value: '6' },
+            ]}
+            selectedValue={shiftDays}
+            onValueChange={setShiftDays}
+            placeholder="Select Shift Days"
+          />
+        </View>
+
+        <View style={styles.inputContainer}>
+          <Text style={styles.inputLabel}>Shift Time *</Text>
+          <SimpleDropdown
+            options={[
+              { label: 'Day Shift (09:00 - 17:00)', value: 'day' },
+              { label: 'Night Shift (21:00 - 05:00)', value: 'night' },
+            ]}
+            selectedValue={shiftTime}
+            onValueChange={(value) => {
+              setShiftTime(value);
+              // Auto-populate shift times based on selection
+              if (value === 'day') {
+                setShiftStartTime('09:00');
+                setShiftEndTime('17:00');
+              } else if (value === 'night') {
+                setShiftStartTime('21:00');
+                setShiftEndTime('05:00');
+              }
+            }}
+            placeholder="Select Shift Time"
+          />
+        </View>
+
+        <View style={styles.inputContainer}>
+          <Text style={styles.inputLabel}>Shift Start Time</Text>
+          <TextInput
+            style={styles.input}
+            value={shiftStartTime}
+            onChangeText={setShiftStartTime}
+            placeholder="HH:MM (e.g., 09:00)"
+          />
+        </View>
+
+        <View style={styles.inputContainer}>
+          <Text style={styles.inputLabel}>Shift End Time</Text>
+          <TextInput
+            style={styles.input}
+            value={shiftEndTime}
+            onChangeText={setShiftEndTime}
+            placeholder="HH:MM (e.g., 17:00)"
           />
         </View>
 
@@ -861,6 +933,61 @@ const UsersScreen = () => {
                   selectedValue={empGender}
                   onValueChange={setEmpGender}
                   placeholder="Select Gender"
+                />
+              </View>
+
+              <View style={styles.inputContainer}>
+                <Text style={styles.inputLabel}>Shift Days</Text>
+                <SimpleDropdown
+                  options={[
+                    { label: '5 Days (Sat & Sun Off)', value: '5' },
+                    { label: '6 Days (Sun Off)', value: '6' },
+                  ]}
+                  selectedValue={shiftDays}
+                  onValueChange={setShiftDays}
+                  placeholder="Select Shift Days"
+                />
+              </View>
+
+              <View style={styles.inputContainer}>
+                <Text style={styles.inputLabel}>Shift Time</Text>
+                <SimpleDropdown
+                  options={[
+                    { label: 'Day Shift (09:00 - 17:00)', value: 'day' },
+                    { label: 'Night Shift (21:00 - 05:00)', value: 'night' },
+                  ]}
+                  selectedValue={shiftTime}
+                  onValueChange={(value) => {
+                    setShiftTime(value);
+                    if (value === 'day') {
+                      setShiftStartTime('09:00');
+                      setShiftEndTime('17:00');
+                    } else if (value === 'night') {
+                      setShiftStartTime('21:00');
+                      setShiftEndTime('05:00');
+                    }
+                  }}
+                  placeholder="Select Shift Time"
+                />
+              </View>
+
+              <View style={styles.inputContainer}>
+                <Text style={styles.inputLabel}>Shift Start Time</Text>
+                <TextInput
+                  style={styles.input}
+                  value={shiftStartTime}
+                  onChangeText={setShiftStartTime}
+                  placeholder="HH:MM (e.g., 09:00)"
+                />
+              </View>
+
+              <View style={styles.inputContainer}>
+                <Text style={styles.inputLabel}>Shift End Time</Text>
+                <TextInput
+                  style={styles.input}
+                  value={shiftEndTime}
+                  onChangeText={setShiftEndTime}
+                  placeholder="HH:MM (e.g., 17:00)"
                 />
               </View>
 

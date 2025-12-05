@@ -10,7 +10,7 @@ const app = express();
 
 let authRoutes, userRoutes, attendanceRoutes, locationRoutes, assignmentRoutes;
 let leaveRoutes, dashboardRoutes, approvalRoutes, performanceRoutes;
-let systemRoutes, liveTrackingRoutes, notificationRoutes;
+let systemRoutes, liveTrackingRoutes, notificationRoutes, holidayRoutes;
 
 try {
   authRoutes = require('./routes/auth');
@@ -25,6 +25,7 @@ try {
   systemRoutes = require('./routes/system');
   liveTrackingRoutes = require('./routes/liveTracking');
   notificationRoutes = require('./routes/notifications');
+  holidayRoutes = require('./routes/holidays');
 } catch (error) {
   console.error('❌ Error loading routes:', error.message);
   console.error(error.stack);
@@ -60,7 +61,8 @@ app.get('/', (req, res) => {
       approvals: '/api/approvals - Approval workflows',
       performance: '/api/performance - Performance reviews',
       system: '/api/system - System configuration',
-      liveTracking: '/api/live-tracking - Live location tracking'
+      liveTracking: '/api/live-tracking - Live location tracking',
+      holidays: '/api/holidays - Company holidays management'
     },
     server: {
       port: req.socket.localPort || process.env.PORT || 3000,
@@ -160,7 +162,8 @@ app.get('/api', (req, res) => {
         approvals: '/api/approvals - Approval workflows',
         performance: '/api/performance - Performance reviews',
         system: '/api/system - System configuration',
-        liveTracking: '/api/live-tracking - Live location tracking'
+        liveTracking: '/api/live-tracking - Live location tracking',
+        holidays: '/api/holidays - Company holidays management'
       }
     },
     server: {
@@ -184,6 +187,7 @@ app.use('/api/performance', performanceRoutes);
 app.use('/api/system', systemRoutes);
 app.use('/api/live-tracking', liveTrackingRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/holidays', holidayRoutes);
 
 app.use((req, res) => {
   res.status(404).json({

@@ -57,7 +57,7 @@ const DashboardScreen = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [stats, setStats] = useState({
     totalStaff: 0, presentCount: 0, absentCount: 0, onLeaveCount: 0,
-    supervisorCount: 0, locationsCount: 0, pendingApprovalsCount: 0, missingClockOutCount: 0
+    supervisorCount: 0, subEngineerCount: 0, locationsCount: 0, pendingApprovalsCount: 0, missingClockOutCount: 0
   });
   const [roleDepartmentStats, setRoleDepartmentStats] = useState({
     byRole: [],
@@ -241,6 +241,7 @@ const departmentEffectInitialisedRef = useRef(false);
       // 2. Comprehensive error checking (Parse queries throw errors on failure, so we just check for data presence)
       const totalStaffCount = dashboardStats?.totalStaff || 0;
       const supervisorCount = dashboardStats?.supervisorCount || 0;
+      const subEngineerCount = dashboardStats?.subEngineerCount || 0;
       const pendingApprovalsCount = dashboardStats?.pendingLeaveRequestsCount || 0;
       
       const rawAssignments = assignmentsRes || [];
@@ -789,6 +790,7 @@ const departmentEffectInitialisedRef = useRef(false);
       setStats({
         totalStaff: effectiveTotal,
         supervisorCount: supervisorCount,
+        subEngineerCount: subEngineerCount,
         locationsCount: locations.length,
         pendingApprovalsCount: pendingApprovalsCount,
         presentCount: present,

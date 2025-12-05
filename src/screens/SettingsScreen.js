@@ -28,6 +28,7 @@ import {
 // Parse import removed - using REST API via apiClient
 import { hasActiveClockIn } from '../lib/attendance';
 import { getSystemConfig, updateSystemConfig } from '../lib/systemConfig';
+import { fetchHolidays, createHoliday, deleteHoliday } from '../lib/holidays';
 import {
   ROLE,
   normalizeRole,
@@ -65,6 +66,14 @@ const SettingsScreen = () => {
   const [minClockIntervalHours, setMinClockIntervalHours] = useState('');
   const [configLoading, setConfigLoading] = useState(false);
   const [configSaving, setConfigSaving] = useState(false);
+
+  // Holiday management state (CEO/SuperAdmin only)
+  const [holidays, setHolidays] = useState([]);
+  const [holidaysLoading, setHolidaysLoading] = useState(false);
+  const [newHolidayDate, setNewHolidayDate] = useState('');
+  const [newHolidayName, setNewHolidayName] = useState('');
+  const [newHolidayDesc, setNewHolidayDesc] = useState('');
+  const [addingHoliday, setAddingHoliday] = useState(false);
 
   useEffect(() => {
     isActiveRef.current = true;
@@ -229,6 +238,7 @@ const SettingsScreen = () => {
     };
 
     loadSystemConfig();
+    loadHolidays(); // Load holidays along with system config
   }, [canAccessAdminFeatures]);
 
   const handleSaveAttendanceSettings = async () => {
@@ -261,6 +271,78 @@ const SettingsScreen = () => {
     } finally {
       setConfigSaving(false);
     }
+  };
+
+  const loadHolidays = async () => {
+    if (!canAccessAdminFeatures) return;
+    
+    setHolidaysLoading(true);
+    try {
+      const data = await fetchHolidays();
+      setHolidays(data);
+    } catch (error) {
+      console.error('Error loading holidays:', error);
+      Alert.alert('Error', 'Failed to load holidays');
+    } finally {
+      setHolidaysLoading(false);
+    }
+  };
+
+  const handleAddHoliday = async () => {
+    if (!newHolidayDate || !newHolidayName) {
+      Alert.alert('Error', 'Please enter both date and holiday name');
+      return;
+    }
+
+    // Validate date format (YYYY-MM-DD)
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(newHolidayDate)) {
+      Alert.alert('Error', 'Invalid date format. Use YYYY-MM-DD (e.g., 2024-12-25)');
+      return;
+    }
+
+    setAddingHoliday(true);
+    try {
+      await createHoliday({
+        date: newHolidayDate,
+        name: newHolidayName,
+        description: newHolidayDesc
+      });
+      setNewHolidayDate('');
+      setNewHolidayName('');
+      setNewHolidayDesc('');
+      await loadHolidays();
+      Alert.alert('Success', 'Holiday added successfully');
+    } catch (error) {
+      console.error('Error adding holiday:', error);
+      Alert.alert('Error', error.message || 'Failed to add holiday');
+    } finally {
+      setAddingHoliday(false);
+    }
+  };
+
+  const handleDeleteHoliday = async (holidayId, holidayName) => {
+    Alert.alert(
+      'Delete Holiday',
+      `Are you sure you want to delete "${holidayName}"?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteHoliday(holidayId);
+              await loadHolidays();
+              Alert.alert('Success', 'Holiday deleted successfully');
+            } catch (error) {
+              console.error('Error deleting holiday:', error);
+              Alert.alert('Error', 'Failed to delete holiday');
+            }
+          }
+        }
+      ]
+    );
   };
 
   const handleNotificationToggle = async (value) => {
@@ -576,6 +658,99 @@ const SettingsScreen = () => {
             )}
           </View>
 
+          {/* Holiday Management */}
+          <View style={styles.attendanceSettingsContainer}>
+            <Text style={styles.attendanceSettingsTitle}>Company Holidays</Text>
+            <Text style={styles.attendanceSettingsDescription}>
+              Manage company holidays. Staff working on holidays will automatically get overtime.
+            </Text>
+
+            {holidaysLoading ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="small" color="#1976d2" />
+                <Text style={styles.loadingText}>Loading holidays...</Text>
+              </View>
+            ) : (
+              <>
+                {/* Add New Holiday Form */}
+                <View style={styles.holidayFormContainer}>
+                  <Text style={styles.inputLabel}>Add New Holiday</Text>
+                  
+                  <View style={styles.inputContainer}>
+                    <Text style={styles.inputHelper}>Date (YYYY-MM-DD)</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={newHolidayDate}
+                      onChangeText={setNewHolidayDate}
+                      placeholder="2024-12-25"
+                      editable={!addingHoliday}
+                    />
+                  </View>
+
+                  <View style={styles.inputContainer}>
+                    <Text style={styles.inputHelper}>Holiday Name *</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={newHolidayName}
+                      onChangeText={setNewHolidayName}
+                      placeholder="Eid-ul-Fitr"
+                      editable={!addingHoliday}
+                    />
+                  </View>
+
+                  <View style={styles.inputContainer}>
+                    <Text style={styles.inputHelper}>Description (Optional)</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={newHolidayDesc}
+                      onChangeText={setNewHolidayDesc}
+                      placeholder="Religious holiday"
+                      editable={!addingHoliday}
+                    />
+                  </View>
+
+                  <TouchableOpacity
+                    style={[styles.saveButton, addingHoliday && styles.saveButtonDisabled]}
+                    onPress={handleAddHoliday}
+                    disabled={addingHoliday}
+                  >
+                    {addingHoliday ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <Text style={styles.saveButtonText}>Add Holiday</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+
+                {/* Holidays List */}
+                <View style={styles.holidaysListContainer}>
+                  <Text style={styles.inputLabel}>Existing Holidays ({holidays.length})</Text>
+                  {holidays.length === 0 ? (
+                    <Text style={styles.noHolidaysText}>No holidays added yet</Text>
+                  ) : (
+                    holidays.map((holiday) => (
+                      <View key={holiday.id} style={styles.holidayItem}>
+                        <View style={styles.holidayInfo}>
+                          <Text style={styles.holidayName}>{holiday.name}</Text>
+                          <Text style={styles.holidayDate}>{holiday.date}</Text>
+                          {holiday.description && (
+                            <Text style={styles.holidayDesc}>{holiday.description}</Text>
+                          )}
+                        </View>
+                        <TouchableOpacity
+                          style={styles.deleteHolidayButton}
+                          onPress={() => handleDeleteHoliday(holiday.id, holiday.name)}
+                        >
+                          <Text style={styles.deleteHolidayButtonText}>Delete</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))
+                  )}
+                </View>
+              </>
+            )}
+          </View>
+
         </View>
       )}
 
@@ -611,6 +786,16 @@ const SettingsScreen = () => {
             <Text style={styles.generalManagerButtonText}>Reports</Text>
             <Text style={styles.buttonDescription}>
               View and export attendance reports
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.button, styles.generalManagerButton]}
+            onPress={() => navigation.navigate('DetailedTimeReport')}
+          >
+            <Text style={styles.generalManagerButtonText}>Detailed Time Report</Text>
+            <Text style={styles.buttonDescription}>
+              Clock-in/out times with photos and shift hours
             </Text>
           </TouchableOpacity>
         </View>
@@ -1011,6 +1196,62 @@ const styles = StyleSheet.create({
     marginLeft: 12,
     fontSize: 14,
     color: '#666',
+  },
+  holidayFormContainer: {
+    marginTop: 12,
+    marginBottom: 16,
+  },
+  holidaysListContainer: {
+    marginTop: 16,
+  },
+  holidayItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  holidayInfo: {
+    flex: 1,
+  },
+  holidayName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 4,
+  },
+  holidayDate: {
+    fontSize: 14,
+    color: '#1976d2',
+    marginBottom: 2,
+  },
+  holidayDesc: {
+    fontSize: 12,
+    color: '#666',
+    fontStyle: 'italic',
+  },
+  deleteHolidayButton: {
+    backgroundColor: '#d32f2f',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 6,
+    marginLeft: 12,
+  },
+  deleteHolidayButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  noHolidaysText: {
+    textAlign: 'center',
+    color: '#999',
+    fontSize: 14,
+    fontStyle: 'italic',
+    paddingVertical: 16,
   },
 });
 

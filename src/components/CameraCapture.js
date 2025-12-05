@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Alert, Platform, StatusBar } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useAuth } from '../contexts/AuthContext';
@@ -8,6 +8,16 @@ import {
   normalizeRole,
   hasFieldLeadershipPrivileges,
 } from '../lib/roles';
+
+// Get safe area padding for status bar/notch
+const getStatusBarHeight = () => {
+  if (Platform.OS === 'ios') {
+    return 44; // Standard iOS status bar + safe area
+  } else if (Platform.OS === 'android') {
+    return StatusBar.currentHeight || 24;
+  }
+  return 0;
+};
 
 const CameraCapture = ({ onPhotoTaken, onClose, title = 'Take Photo' }) => {
   const { profile } = useAuth();
@@ -75,23 +85,42 @@ const CameraCapture = ({ onPhotoTaken, onClose, title = 'Take Photo' }) => {
   if (!permission.granted) {
     return (
       <View style={styles.container}>
-        <Text style={styles.messageText}>No access to camera</Text>
-        <TouchableOpacity style={styles.permissionButton} onPress={requestPermission}>
-          <Text style={styles.permissionButtonText}>Grant Permission</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-          <Text style={styles.closeButtonText}>Close</Text>
-        </TouchableOpacity>
+        <View style={[styles.header, { paddingTop: getStatusBarHeight() + 8 }]}>
+          <Text style={styles.title}>Camera Permission</Text>
+          <TouchableOpacity 
+            style={styles.closeButton} 
+            onPress={onClose}
+            activeOpacity={0.7}
+            hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
+          >
+            <View style={styles.closeButtonCircle}>
+              <Text style={styles.closeButtonText}>✕</Text>
+            </View>
+          </TouchableOpacity>
+        </View>
+        <View style={styles.permissionContainer}>
+          <Text style={styles.messageText}>No access to camera</Text>
+          <TouchableOpacity style={styles.permissionButton} onPress={requestPermission}>
+            <Text style={styles.permissionButtonText}>Grant Permission</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: getStatusBarHeight() + 8 }]}>
         <Text style={styles.title}>{title}</Text>
-        <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-          <Text style={styles.closeButtonText}>✕</Text>
+        <TouchableOpacity 
+          style={styles.closeButton} 
+          onPress={onClose}
+          activeOpacity={0.7}
+          hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
+        >
+          <View style={styles.closeButtonCircle}>
+            <Text style={styles.closeButtonText}>✕</Text>
+          </View>
         </TouchableOpacity>
       </View>
 
@@ -129,20 +158,35 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 16,
-    backgroundColor: 'rgba(0,0,0,0.7)',
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    backgroundColor: 'rgba(0,0,0,0.8)',
   },
   title: {
     color: 'white',
     fontSize: 18,
     fontWeight: 'bold',
+    flex: 1,
   },
   closeButton: {
-    padding: 8,
+    padding: 4,
+    marginLeft: 16,
+  },
+  closeButtonCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.3)',
   },
   closeButtonText: {
     color: 'white',
-    fontSize: 18,
+    fontSize: 22,
+    fontWeight: 'bold',
+    lineHeight: 22,
   },
   cameraWrapper: {
     flex: 1,
@@ -191,18 +235,25 @@ const styles = StyleSheet.create({
   placeholder: {
     width: 60,
   },
+  permissionContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
   messageText: {
     color: 'white',
-    fontSize: 16,
-    marginBottom: 16,
+    fontSize: 18,
+    marginBottom: 24,
     textAlign: 'center',
   },
   permissionButton: {
     backgroundColor: '#007AFF',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 8,
-    marginBottom: 16,
+    paddingHorizontal: 32,
+    paddingVertical: 16,
+    borderRadius: 12,
+    minWidth: 200,
+    alignItems: 'center',
   },
   permissionButtonText: {
     color: 'white',

@@ -67,7 +67,8 @@ router.post('/clock-in', protect, async (req, res) => {
       lng,
       clock_in_photo_url,
       is_override,
-      clocked_by_id
+      clocked_by_id,
+      attendance_date // Optional: for backdated attendance (YYYY-MM-DD)
     } = req.body;
 
     if (!staff_id || !supervisor_id || !nc_location_id) {
@@ -156,7 +157,53 @@ router.post('/clock-in', protect, async (req, res) => {
     }
 
     // Check for existing attendance
-    const todayStr = new Date().toISOString().split('T')[0];
+    // Allow managers to clock in/out staff for today or yesterday
+    let targetDate = new Date();
+    let todayStr = targetDate.toISOString().split('T')[0];
+    
+    if (attendance_date && isManager && !isSelfAction) {
+      // Validate date format
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (!dateRegex.test(attendance_date)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid date format. Use YYYY-MM-DD'
+        });
+      }
+      
+      // Allow today or yesterday only (not future dates or more than 1 day back)
+      const requestedDate = new Date(attendance_date + 'T00:00:00');
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      yesterday.setHours(0, 0, 0, 0);
+      
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      tomorrow.setHours(0, 0, 0, 0);
+      
+      // Check if date is in the future
+      if (requestedDate >= tomorrow) {
+        return res.status(400).json({
+          success: false,
+          error: 'Cannot create attendance for future dates'
+        });
+      }
+      
+      // Check if date is more than 1 day old
+      if (requestedDate < yesterday) {
+        return res.status(400).json({
+          success: false,
+          error: 'Can only mark attendance for today or yesterday'
+        });
+      }
+      
+      todayStr = attendance_date;
+      targetDate = requestedDate;
+    }
+    
     const existingAttendance = await Attendance.findOne({
       staffId: staff_id,
       attendanceDate: todayStr,
@@ -187,15 +234,43 @@ router.post('/clock-in', protect, async (req, res) => {
     // Get system config
     const systemConfig = await getSystemConfig();
     
-    // Calculate if late
-    const now = new Date();
-    let shiftTime = parseShiftTime(location.morningShiftStart) || 
-                    parseShiftTime(location.nightShiftStart) || 
-                    { hour: 9, minute: 0 };
+    // Calculate if late based on USER's shift time (not location's shift time)
+    // For backdated attendance, use the target date; otherwise use current time
+    const now = attendance_date && isManager && !isSelfAction ? targetDate : new Date();
+    
+    // Use staff member's personal shift configuration
+    const staffShiftStartTime = staff.shiftStartTime || '09:00';
+    let shiftTime = parseShiftTime(staffShiftStartTime) || { hour: 9, minute: 0 };
     
     const clockInMinutes = now.getHours() * 60 + now.getMinutes();
     const workStartMinutes = shiftTime.hour * 60 + shiftTime.minute;
     const isLate = clockInMinutes > (workStartMinutes + systemConfig.gracePeriodMinutes);
+
+    // Check if today is an off day (weekly or company holiday)
+    const Holiday = require('../models/Holiday');
+    const dayOfWeek = now.getDay(); // 0=Sunday, 6=Saturday
+    
+    // Get staff's shift configuration
+    const staffShiftDays = staff.shiftDays || 6; // Default to 6-day week
+    
+    // Check weekly off days
+    let isWeeklyOff = false;
+    if (staffShiftDays === 6) {
+      // 6-day shift: Only Sunday is off
+      isWeeklyOff = (dayOfWeek === 0);
+    } else if (staffShiftDays === 5) {
+      // 5-day shift: Saturday and Sunday are off
+      isWeeklyOff = (dayOfWeek === 0 || dayOfWeek === 6);
+    }
+    
+    // Check company holidays
+    const companyHoliday = await Holiday.findOne({ date: todayStr });
+    const isCompanyHoliday = !!companyHoliday;
+    
+    // Automatic overtime if working on any off day
+    const isOffDay = isWeeklyOff || isCompanyHoliday;
+    const autoOvertime = isOffDay;
+    const finalOvertime = overtime || autoOvertime;
 
     // Create attendance record
     // clockedInBy should be set when someone else clocks in on behalf of staff
@@ -207,7 +282,7 @@ router.post('/clock-in', protect, async (req, res) => {
       ncLocationId: nc_location_id,
       attendanceDate: todayStr,
       clockIn: now,
-      overtime: overtime || false,
+      overtime: finalOvertime,
       doubleDuty: double_duty || false,
       status: isLate ? 'Late' : 'Present',
       approvalStatus: 'pending',
@@ -264,7 +339,8 @@ router.post('/clock-out', protect, async (req, res) => {
       lat,
       lng,
       clock_out_photo_url,
-      is_override
+      is_override,
+      attendance_date // Optional: for backdated attendance (YYYY-MM-DD)
     } = req.body;
 
     if (!staff_id || !supervisor_id || !nc_location_id) {
@@ -320,8 +396,21 @@ router.post('/clock-out', protect, async (req, res) => {
       }
     }
 
-    // Find today's attendance
-    const todayStr = new Date().toISOString().split('T')[0];
+    // Find today's attendance (or backdated attendance for managers)
+    let todayStr = new Date().toISOString().split('T')[0];
+    
+    if (attendance_date && isManager && !isSelfAction) {
+      // Validate date format
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (!dateRegex.test(attendance_date)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid date format. Use YYYY-MM-DD'
+        });
+      }
+      todayStr = attendance_date;
+    }
+    
     const attendance = await Attendance.findOne({
       staffId: staff_id,
       supervisorId: supervisor_id,
@@ -524,6 +613,144 @@ router.get('/report', protect, async (req, res) => {
       data: formatted
     });
   } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// @route   GET /api/attendance/leadership
+// @desc    Get today's attendance for leadership roles (above staff)
+// @access  Private - CEO and Super Admin only
+router.get('/leadership', protect, async (req, res) => {
+  try {
+    const user = req.user;
+    const userRole = normalizeRole(user.role);
+
+    // Only CEO and Super Admin can access leadership attendance
+    if (!['ceo', 'super_admin'].includes(userRole)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied. CEO or Super Admin access required.'
+      });
+    }
+
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    // Fetch all users with leadership roles (all roles above staff)
+    const leadershipRoles = ['supervisor', 'sub_engineer', 'manager', 'general_manager'];
+    const leadershipUsers = await User.find({
+      role: { $in: leadershipRoles },
+      isActive: true
+    }).select('fullName username email role department');
+
+    // Fetch today's attendance for leadership users
+    const leadershipUserIds = leadershipUsers.map(u => u._id);
+    const attendances = await Attendance.find({
+      attendanceDate: todayStr,
+      staffId: { $in: leadershipUserIds }
+    })
+      .populate('ncLocationId', 'name code')
+      .populate('clockedInBy', 'fullName username')
+      .populate('clockedOutBy', 'fullName username')
+      .sort({ createdAt: -1 });
+
+    // Create a map of attendance by staff ID
+    const attendanceMap = new Map();
+    attendances.forEach(att => {
+      const staffId = att.staffId?.toString();
+      if (staffId && !attendanceMap.has(staffId)) {
+        attendanceMap.set(staffId, att);
+      }
+    });
+
+    // Build the result array with all leadership users and their attendance status
+    const result = leadershipUsers.map(user => {
+      const userId = user._id.toString();
+      const attendance = attendanceMap.get(userId);
+
+      const fullName = user.fullName || user.username || 'Unknown';
+      const role = user.role || 'unknown';
+      const department = user.department || null;
+
+      let clockIn = null;
+      let clockOut = null;
+      let status = 'absent';
+      let nc_location_id = null;
+      let nc_location_name = 'N/A';
+      let clockedInBy = null;
+      let clockedOutBy = null;
+      let isOverride = false;
+
+      if (attendance) {
+        clockIn = attendance.clockIn ? attendance.clockIn.toISOString() : null;
+        clockOut = attendance.clockOut ? attendance.clockOut.toISOString() : null;
+        status = attendance.status ? attendance.status.toLowerCase().replace(' ', '-') : 'absent';
+        
+        if (attendance.ncLocationId) {
+          nc_location_id = attendance.ncLocationId._id?.toString();
+          nc_location_name = attendance.ncLocationId.name || 'N/A';
+        }
+
+        // Get clockedBy information
+        if (attendance.clockedInBy) {
+          const clockedInById = attendance.clockedInBy._id?.toString();
+          if (clockedInById && clockedInById !== userId) {
+            clockedInBy = attendance.clockedInBy.fullName || attendance.clockedInBy.username || null;
+          }
+        }
+
+        if (attendance.clockedOutBy) {
+          const clockedOutById = attendance.clockedOutBy._id?.toString();
+          if (clockedOutById && clockedOutById !== userId) {
+            clockedOutBy = attendance.clockedOutBy.fullName || attendance.clockedOutBy.username || null;
+          }
+        }
+
+        isOverride = attendance.isOverride || false;
+      }
+
+      // Determine status if attendance record exists
+      if (attendance) {
+        if (clockIn && !clockOut) {
+          status = 'present';
+        } else if (clockIn && clockOut) {
+          status = 'present';
+        }
+      }
+
+      return {
+        id: attendance ? attendance._id.toString() : `${userId}-${todayStr}`,
+        userId,
+        name: fullName,
+        role,
+        department,
+        clockIn,
+        clockOut,
+        status,
+        nc_location_id,
+        nc_location_name,
+        clockedInBy,
+        clockedOutBy,
+        isOverride,
+      };
+    });
+
+    // Sort by role (General Manager, Manager, Sub Engineer/Supervisor) then by name
+    const roleOrder = { general_manager: 1, manager: 2, sub_engineer: 3, supervisor: 3 };
+    result.sort((a, b) => {
+      const roleDiff = (roleOrder[a.role] || 99) - (roleOrder[b.role] || 99);
+      if (roleDiff !== 0) return roleDiff;
+      return (a.name || '').localeCompare(b.name || '');
+    });
+
+    res.json({
+      success: true,
+      data: result
+    });
+  } catch (error) {
+    console.error('Error fetching leadership attendance:', error);
     res.status(500).json({
       success: false,
       error: error.message

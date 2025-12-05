@@ -253,7 +253,11 @@ router.post('/', protect, authorize('ceo', 'super_admin', 'general_manager', 'ma
       empCell2,
       empFlg,
       empMarried,
-      empGender
+      empGender,
+      shiftDays,
+      shiftTime,
+      shiftStartTime,
+      shiftEndTime
     } = req.body;
 
     if (!email || !password) {
@@ -286,7 +290,11 @@ router.post('/', protect, authorize('ceo', 'super_admin', 'general_manager', 'ma
       empCell2,
       empFlg,
       empMarried,
-      empGender
+      empGender,
+      shiftDays: shiftDays || 6,
+      shiftTime: shiftTime || 'day',
+      shiftStartTime: shiftStartTime || '09:00',
+      shiftEndTime: shiftEndTime || '17:00'
     });
 
     res.status(201).json({

@@ -144,11 +144,10 @@ export async function hasActiveClockIn(staffId = null) {
   }
 }
 
-// Fetch leadership attendance (Managers, General Managers, Supervisors)
+// Fetch leadership attendance (Supervisors, Sub Engineers, Managers, General Managers)
 export async function fetchLeadershipAttendance() {
   try {
-    // Use today's attendance filtered by role on frontend or add backend endpoint
-    const response = await apiClient.get('/attendance/today');
+    const response = await apiClient.get('/attendance/leadership');
     return response.data || [];
   } catch (error) {
     console.error('Error fetching leadership attendance:', error);

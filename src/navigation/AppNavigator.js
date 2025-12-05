@@ -13,6 +13,7 @@ import SettingsScreen from '../screens/SettingsScreen';
 import LeaveManagementScreen from '../screens/LeaveManagementScreen';
 import ApprovalsScreen from '../screens/ApprovalsScreen';
 import ReportsScreen from '../screens/ReportsScreen';
+import DetailedTimeReportScreen from '../screens/DetailedTimeReportScreen';
 import PhotoReviewScreen from '../screens/PhotoReviewScreen';
 import PerformanceReviewScreen from '../screens/PerformanceReviewScreen';
 import MapScreen from '../screens/MapScreen';
@@ -109,6 +110,7 @@ function AppNavigator() {
         <Stack.Screen name="LeaveManagement" component={LeaveManagementScreen} options={{ headerShown: true, title: 'Leave Management' }} />
         <Stack.Screen name="Approvals" component={ApprovalsScreen} options={{ headerShown: true, title: 'Approvals' }} />
         <Stack.Screen name="Reports" component={ReportsScreen} options={{ headerShown: true, title: 'Reports' }} />
+        <Stack.Screen name="DetailedTimeReport" component={DetailedTimeReportScreen} options={{ headerShown: true, title: 'Detailed Time Report' }} />
         <Stack.Screen name="PhotoReview" component={PhotoReviewScreen} options={{ headerShown: true, title: 'Photo Review' }} />
         <Stack.Screen name="PerformanceReview" component={PerformanceReviewScreen} options={{ headerShown: true, title: 'Performance Review' }} />
         <Stack.Screen name="Map" component={MapScreen} options={{ headerShown: true, title: 'Locations Map' }} />

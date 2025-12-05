@@ -132,6 +132,10 @@ export async function adminCreateUser(
       empFlg: employeeFields.empFlg || null,
       empMarried: employeeFields.empMarried || null,
       empGender: employeeFields.empGender || null,
+      shiftDays: employeeFields.shiftDays || 6,
+      shiftTime: employeeFields.shiftTime || 'day',
+      shiftStartTime: employeeFields.shiftStartTime || '09:00',
+      shiftEndTime: employeeFields.shiftEndTime || '17:00',
     });
     return { user: response.data, error: null };
   } catch (error) {

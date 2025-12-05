@@ -10,9 +10,10 @@ const { protect, normalizeRole, hasFullControl, checkDepartmentAccess } = requir
 // @access  Private
 router.get('/stats', protect, async (req, res) => {
   try {
-    const [totalStaffCount, supervisorCount, pendingLeaveRequestsCount] = await Promise.all([
+    const [totalStaffCount, supervisorCount, subEngineerCount, pendingLeaveRequestsCount] = await Promise.all([
       User.countDocuments({ role: 'staff', isActive: true }),
       User.countDocuments({ role: 'supervisor', isActive: true }),
+      User.countDocuments({ role: 'sub_engineer', isActive: true }),
       LeaveRequest.countDocuments({ status: 'pending' })
     ]);
 
@@ -21,6 +22,7 @@ router.get('/stats', protect, async (req, res) => {
       data: {
         totalStaff: totalStaffCount || 0,
         supervisorCount: supervisorCount || 0,
+        subEngineerCount: subEngineerCount || 0,
         pendingLeaveRequestsCount: pendingLeaveRequestsCount || 0
       }
     });

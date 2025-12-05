@@ -296,6 +296,15 @@ const AdminDashboard = ({ stats, records, roleDepartmentStats = {} }) => {
           </View>
           <View style={styles.statsCardWrapper}>
             <StatsCard
+              title="Sub Engineers"
+              value={stats.subEngineerCount || 0}
+              icon={Feather}
+              iconName="users"
+              color="#17a2b8"
+            />
+          </View>
+          <View style={styles.statsCardWrapper}>
+            <StatsCard
               title="Locations"
               value={stats.locationsCount}
               icon={Feather}
@@ -320,16 +329,37 @@ const AdminDashboard = ({ stats, records, roleDepartmentStats = {} }) => {
                 <Text style={styles.overviewSectionTitle}>By Role</Text>
                 <View style={styles.statsList}>
                   {roleDepartmentStats.byRole && roleDepartmentStats.byRole.length > 0 ? (
-                    roleDepartmentStats.byRole.map((item, index) => {
-                      const roleOption = ROLE_OPTIONS.find(r => r.value === item.role);
-                      const roleLabel = roleOption ? roleOption.label : item.role.charAt(0).toUpperCase() + item.role.slice(1);
-                      return (
-                        <View key={index} style={styles.statsRow}>
-                          <Text style={styles.statsLabel}>{roleLabel}</Text>
-                          <Text style={styles.statsValue}>{item.count}</Text>
-                        </View>
-                      );
-                    })
+                    (() => {
+                      // Sort roles by hierarchy: Super Admin, CEO, General Manager, Manager, Sub Engineer, Supervisor, Staff
+                      const roleOrder = {
+                        'super_admin': 1,
+                        'ceo': 2,
+                        'general_manager': 3,
+                        'manager': 4,
+                        'sub_engineer': 5,
+                        'supervisor': 5, // Same level as sub_engineer
+                        'staff': 6,
+                        'unknown': 99
+                      };
+                      
+                      const sortedRoles = [...roleDepartmentStats.byRole].sort((a, b) => {
+                        const orderA = roleOrder[a.role] || 99;
+                        const orderB = roleOrder[b.role] || 99;
+                        if (orderA !== orderB) return orderA - orderB;
+                        return a.role.localeCompare(b.role);
+                      });
+
+                      return sortedRoles.map((item, index) => {
+                        const roleOption = ROLE_OPTIONS.find(r => r.value === item.role);
+                        const roleLabel = roleOption ? roleOption.label : item.role.charAt(0).toUpperCase() + item.role.slice(1);
+                        return (
+                          <View key={index} style={styles.statsRow}>
+                            <Text style={styles.statsLabel}>{roleLabel}</Text>
+                            <Text style={styles.statsValue}>{item.count}</Text>
+                          </View>
+                        );
+                      });
+                    })()
                   ) : (
                     <Text style={styles.emptyText}>No role data available</Text>
                   )}

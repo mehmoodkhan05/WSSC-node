@@ -1,6 +1,7 @@
 export const ROLE = {
   STAFF: 'staff',
   SUPERVISOR: 'supervisor',
+  SUB_ENGINEER: 'sub_engineer',
   MANAGER: 'manager',
   GENERAL_MANAGER: 'general_manager',
   CEO: 'ceo',
@@ -9,14 +10,21 @@ export const ROLE = {
 
 export const ROLE_VALUES = Object.values(ROLE);
 
-const ROLE_ORDER = ROLE_VALUES.reduce((acc, role, index) => {
-  acc[role] = index;
-  return acc;
-}, {});
+// Role hierarchy - supervisor and sub_engineer are at same level
+const ROLE_ORDER = {
+  'staff': 0,
+  'supervisor': 1,
+  'sub_engineer': 1, // Same level as supervisor
+  'manager': 2,
+  'general_manager': 3,
+  'ceo': 4,
+  'super_admin': 5,
+};
 
 const ROLE_LABELS = {
   staff: 'Staff',
   supervisor: 'Supervisor',
+  sub_engineer: 'Sub Engineer',
   manager: 'Manager',
   general_manager: 'General Manager',
   ceo: 'Chief Executive Officer',
