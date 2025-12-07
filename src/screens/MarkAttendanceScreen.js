@@ -52,6 +52,9 @@ const MarkAttendanceScreen = () => {
   const [doubleDuty, setDoubleDuty] = useState(false);
   const [clockAsSupervisor, setClockAsSupervisor] = useState(false);
   const [overrideMode, setOverrideMode] = useState(false);
+  const [overrideForSupervisor, setOverrideForSupervisor] = useState(false);
+  const [overrideForStaff, setOverrideForStaff] = useState(false);
+  const [overrideTab, setOverrideTab] = useState('clock_in'); // 'clock_in' or 'clock_out'
 
   // Data state
   const [staff, setStaff] = useState([]);
@@ -165,30 +168,9 @@ const MarkAttendanceScreen = () => {
             setCurrentSupervisorId(meId);
           }
         } else if (overrideMode && (isManager || isGeneralManager)) {
-          // For override mode, filter by department
-          const userDept = userProfile?.department || profile?.department || null;
-          if (userDept) {
-            // Filter assignments to only those in the user's department
-            const deptAssignments = (asgs || []).filter(a => {
-              const assignmentStaff = (stf || []).find(s => s.user_id === a.staff_id);
-              const assignmentSupervisor = (sups || []).find(s => s.user_id === a.supervisor_id);
-              const staffDept = assignmentStaff?.department || null;
-              const supervisorDept = assignmentSupervisor?.department || null;
-              return (staffDept === userDept || supervisorDept === userDept) && a.is_active;
-            });
-            // Get unique location IDs from filtered assignments
-            const deptLocationIds = [...new Set(deptAssignments.map(a => a.nc_location_id))];
-            const locationsWithDeptStaff = (locs || []).filter(l => deptLocationIds.includes(l.id));
-            setLocations(locationsWithDeptStaff);
-            if (locationsWithDeptStaff.length > 0) setCurrentLocationId(locationsWithDeptStaff[0].id);
-          } else {
-            // No department assigned, show all locations with assigned staff
-            const locationsWithStaff = (locs || []).filter(l =>
-              (asgs || []).some(a => a.nc_location_id === l.id && a.is_active)
-            );
-            setLocations(locationsWithStaff);
-            if (locationsWithStaff.length > 0) setCurrentLocationId(locationsWithStaff[0].id);
-          }
+          // For override mode, show ALL locations so user can filter by location
+          setLocations(locs || []);
+          if (locs && locs.length > 0) setCurrentLocationId(locs[0].id);
         } else {
           // For other management roles, show locations with assigned staff
           const locationsWithStaff = (locs || []).filter(l =>
@@ -253,28 +235,10 @@ const MarkAttendanceScreen = () => {
         const officeLocations = allLocations.filter(l => isOfficeLocation(l));
         setLocations(officeLocations);
       } else if (overrideMode && (isManager || isGeneralManager)) {
-        // For override mode, filter by department
-        const userDept = currentUserProfile?.department || profile?.department || null;
-        if (userDept) {
-          // Filter assignments to only those in the user's department
-          const deptAssignments = assignments.filter(a => {
-            const assignmentStaff = staff.find(s => s.user_id === a.staff_id);
-            const assignmentSupervisor = supervisors.find(s => s.user_id === a.supervisor_id);
-            const staffDept = assignmentStaff?.department || null;
-            const supervisorDept = assignmentSupervisor?.department || null;
-            return (staffDept === userDept || supervisorDept === userDept) && a.is_active;
-          });
-          // Get unique location IDs from filtered assignments
-          const deptLocationIds = [...new Set(deptAssignments.map(a => a.nc_location_id))];
-          const locationsWithDeptStaff = allLocations.filter(l => deptLocationIds.includes(l.id));
-          setLocations(locationsWithDeptStaff);
-        } else {
-          // No department assigned, show locations with assigned staff
-          const locationsWithStaff = allLocations.filter(l =>
-            assignments.some(a => a.nc_location_id === l.id && a.is_active)
-          );
-          setLocations(locationsWithStaff);
-        }
+        // For override mode, show ALL locations so user can filter by location
+        setLocations(allLocations);
+        // Clear staff selection when location changes to force re-selection
+        setSelectedStaff('');
       } else {
         // For other management roles, show locations with assigned staff
         const locationsWithStaff = allLocations.filter(l =>
@@ -349,26 +313,8 @@ const MarkAttendanceScreen = () => {
       // Filter to office locations only for Manager/GM when not in override mode
       filteredLocations = (latest || []).filter(l => isOfficeLocation(l));
     } else if (overrideMode && (isManager || isGeneralManager)) {
-      // For override mode, filter by department
-      const userDept = currentUserProfile?.department || profile?.department || null;
-      if (userDept) {
-        // Filter assignments to only those in the user's department
-        const deptAssignments = assignments.filter(a => {
-          const assignmentStaff = staff.find(s => s.user_id === a.staff_id);
-          const assignmentSupervisor = supervisors.find(s => s.user_id === a.supervisor_id);
-          const staffDept = assignmentStaff?.department || null;
-          const supervisorDept = assignmentSupervisor?.department || null;
-          return (staffDept === userDept || supervisorDept === userDept) && a.is_active;
-        });
-        // Get unique location IDs from filtered assignments
-        const deptLocationIds = [...new Set(deptAssignments.map(a => a.nc_location_id))];
-        filteredLocations = (latest || []).filter(l => deptLocationIds.includes(l.id));
-      } else {
-        // No department assigned, show locations with assigned staff
-        filteredLocations = (latest || []).filter(l =>
-          assignments.some(a => a.nc_location_id === l.id && a.is_active)
-        );
-      }
+      // For override mode, show ALL locations for filtering
+      filteredLocations = latest || [];
     } else {
       // For other management roles, show locations with assigned staff
       filteredLocations = (latest || []).filter(l =>
@@ -702,45 +648,114 @@ const MarkAttendanceScreen = () => {
       return currentStaff ? [currentStaff] : [];
     }
 
-    // For Manager/General Manager in override mode, include supervisors in addition to staff
-    // Filter by department if user has one
+    // For Manager/General Manager in override mode
     if ((isManager || isGeneralManager) && overrideMode) {
+      const currentUserId = currentUserProfile?.user_id;
       const userDept = currentUserDepartment;
       
-      // Filter staff by location and department
-      let filteredStaff = staff.filter(m => {
-        const hasLocationAssignment = assignments.some(a => 
-          a.staff_id === m.user_id && 
-          a.nc_location_id === currentLocationId && 
-          a.is_active
-        );
-        if (!hasLocationAssignment) return false;
-        // If user has a department, filter by it
-        if (userDept) {
-          return (m.department || null) === userDept;
-        }
-        return true;
-      });
+      // If neither checkbox is selected, show placeholder
+      if (!overrideForSupervisor && !overrideForStaff) {
+        return [];
+      }
       
-      // Include supervisors that are assigned to the selected location
-      let filteredSupervisors = supervisors.filter(s => {
-        const hasLocationMapping = supervisorLocations.some(sl => 
-          sl.supervisor_id === s.user_id && sl.nc_location_id === currentLocationId
-        );
-        if (!hasLocationMapping) return false;
-        // If user has a department, filter by it
-        if (userDept) {
-          return (s.department || null) === userDept;
-        }
-        return true;
-      });
+      let result = [];
       
-      // Combine and remove duplicates
-      const combined = [...filteredStaff, ...filteredSupervisors];
+      if (isManager) {
+        // For Manager: Show only users assigned to them, filtered by selected location
+        
+        if (overrideForSupervisor) {
+          // Supervisors who report to this manager (supervisor.manager_id === currentUserId)
+          // AND are mapped to the selected location
+          const mySupervisors = supervisors.filter(s => {
+            if (s.manager_id !== currentUserId) return false;
+            // Check if supervisor is mapped to the selected location
+            const hasLocationMapping = supervisorLocations.some(sl => 
+              sl.supervisor_id === s.user_id && sl.nc_location_id === currentLocationId
+            );
+            return hasLocationMapping;
+          });
+          result = [...result, ...mySupervisors];
+        }
+        
+        if (overrideForStaff) {
+          // Staff assigned to supervisors who report to this manager
+          // AND assigned at the selected location
+          const mySupervisorIds = supervisors
+            .filter(s => s.manager_id === currentUserId)
+            .map(s => s.user_id);
+          
+          const myStaff = staff.filter(m => {
+            // Staff must be assigned to one of the manager's supervisors at this location
+            const assignedToMySupervisorAtLocation = assignments.some(a => 
+              a.staff_id === m.user_id && 
+              mySupervisorIds.includes(a.supervisor_id) && 
+              a.nc_location_id === currentLocationId &&
+              a.is_active
+            );
+            return assignedToMySupervisorAtLocation;
+          });
+          result = [...result, ...myStaff];
+        }
+      } else if (isGeneralManager) {
+        // For General Manager: Show all from same department, filtered by selected location
+        
+        if (overrideForSupervisor) {
+          // Supervisors from same department AND mapped to selected location
+          const deptSupervisors = supervisors.filter(s => {
+            // Check department
+            if (userDept && (s.department || null) !== userDept) {
+              return false;
+            }
+            // Check if supervisor is mapped to the selected location
+            const hasLocationMapping = supervisorLocations.some(sl => 
+              sl.supervisor_id === s.user_id && sl.nc_location_id === currentLocationId
+            );
+            return hasLocationMapping;
+          });
+          result = [...result, ...deptSupervisors];
+        }
+        
+        if (overrideForStaff) {
+          // Staff from same department AND assigned at selected location
+          const deptStaff = staff.filter(m => {
+            // Check department
+            if (userDept && (m.department || null) !== userDept) {
+              return false;
+            }
+            // Check if staff is assigned to this location
+            const hasLocationAssignment = assignments.some(a => 
+              a.staff_id === m.user_id && 
+              a.nc_location_id === currentLocationId &&
+              a.is_active
+            );
+            return hasLocationAssignment;
+          });
+          result = [...result, ...deptStaff];
+        }
+      }
+      
       // Remove duplicates by user_id
-      const unique = combined.filter((person, index, self) =>
+      const unique = result.filter((person, index, self) =>
         index === self.findIndex(p => p.user_id === person.user_id)
       );
+      
+      // Filter based on override tab and today's attendance
+      if (overrideTab === 'clock_in') {
+        // For Clock In tab: Hide users who already clocked in today
+        return unique.filter(person => {
+          const hasClockInToday = todayAttendance.some(att => 
+            att.staffId === person.user_id && att.clockIn
+          );
+          return !hasClockInToday;
+        });
+      } else if (overrideTab === 'clock_out') {
+        // For Clock Out tab: Show only users who clocked in but haven't clocked out
+        return unique.filter(person => {
+          const attendance = todayAttendance.find(att => att.staffId === person.user_id);
+          return attendance && attendance.clockIn && !attendance.clockOut;
+        });
+      }
+      
       return unique;
     }
 
@@ -818,8 +833,8 @@ const MarkAttendanceScreen = () => {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Location Verification - Hidden for CEO/Superadmin */}
-        {!hasExecutiveAccess && (
+        {/* Location Verification - Hidden for CEO/Superadmin and when override mode is active */}
+        {!hasExecutiveAccess && !((isManager || isGeneralManager) && overrideMode) && (
           <Card style={styles.card}>
           <CardHeader>
             <CardTitle>Location Verification</CardTitle>
@@ -848,8 +863,8 @@ const MarkAttendanceScreen = () => {
               />
             </View>
 
-            {/* Hide supervisor dropdown when Manager/GM is clocking themselves (not in override mode) */}
-            {!((isManager || isGeneralManager) && !overrideMode) && (
+            {/* Hide supervisor dropdown for Manager/GM (they use override mode or clock themselves) */}
+            {!(isManager || isGeneralManager) && (
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Supervisor</Text>
                 {hasManagerAccess || hasExecutiveAccess ? (
@@ -892,9 +907,11 @@ const MarkAttendanceScreen = () => {
             {overrideMode && (isManager || isGeneralManager) && (
               <View style={styles.overrideInfoBox}>
                 <Text style={styles.overrideInfoText}>
-                  Override Mode Active: You can clock in/out for staff and supervisors with internet issues.
-                  {currentUserDepartment && ` You can only manage staff from your department (${currentUserDepartment}).`}
-                  Location verification is bypassed in this mode.
+                  Override Mode Active: Select a location to filter, then choose checkbox to show supervisors or staff.
+                  {isManager && ' You can only manage supervisors assigned to you and their staff at the selected location.'}
+                  {isGeneralManager && currentUserDepartment && ` You can manage all from your department (${currentUserDepartment}) at the selected location.`}
+                  {isGeneralManager && !currentUserDepartment && ' You can manage all supervisors and staff at the selected location.'}
+                  {'\n'}Location verification is bypassed in this mode.
                 </Text>
               </View>
             )}
@@ -903,7 +920,7 @@ const MarkAttendanceScreen = () => {
         )}
 
         {/* Attendance Details - Hidden for CEO/Superadmin */}
-        {!hasExecutiveAccess && (
+        {!hasExecutiveAccess && !((isManager || isGeneralManager) && overrideMode) && (
           <Card style={styles.card}>
           <CardHeader>
             <CardTitle>Attendance Details</CardTitle>
@@ -928,7 +945,7 @@ const MarkAttendanceScreen = () => {
                   onValueChange={setSelectedStaff}
                   placeholder={filteredStaff.length === 0 ? 'No assigned staff for this supervisor at this location' : 'Select staff member'}
                   style={styles.dropdown}
-                  disabled={!(hasManagerAccess || hasExecutiveAccess || isSupervisor) || (!!locationVerified && !overrideMode)}
+                  disabled={!(hasManagerAccess || hasExecutiveAccess || isSupervisor) || !!locationVerified}
                   searchPlaceholder="Search by name or employee ID..."
                   getSearchText={(option) => {
                     if (!option || option.value === '') return '';
@@ -976,10 +993,15 @@ const MarkAttendanceScreen = () => {
                     const val = Boolean(v);
                     setOverrideMode(val);
                     if (val) {
-                      // When enabling override mode, reload locations to show locations with staff from user's department
-                      loadInitialData();
+                      // When enabling override mode, show ALL locations for filtering
+                      setLocations(allLocations);
+                      if (allLocations.length > 0) setCurrentLocationId(allLocations[0].id);
                       // Clear staff selection to allow selecting others
                       setSelectedStaff('');
+                      // Reset override checkboxes and tab
+                      setOverrideForSupervisor(false);
+                      setOverrideForStaff(false);
+                      setOverrideTab('clock_in');
                     } else {
                       // When disabling, filter back to office locations if Manager/GM
                       if (isManagerOrGM) {
@@ -993,6 +1015,9 @@ const MarkAttendanceScreen = () => {
                           setCurrentSupervisorId(meId);
                         }
                       }
+                      // Reset override checkboxes
+                      setOverrideForSupervisor(false);
+                      setOverrideForStaff(false);
                     }
                     setLocationVerified(false); // Reset location verification when toggling
                   }}
@@ -1004,25 +1029,216 @@ const MarkAttendanceScreen = () => {
               <AnimatedButton
                 colors={['#2ecc71', '#27ae60']}
                 onPress={handleClockIn}
-                disabled={loading || processingClockIn || processingClockOut || (!overrideMode && !locationVerified)}
+                disabled={loading || processingClockIn || processingClockOut || !locationVerified}
               >
                 <Text style={styles.clockButtonText}>
-                  {processingClockIn ? (overrideMode ? '⏳ Processing...' : '📷 Opening Camera...') : loading ? 'Processing...' : 'Clock In'}
+                  {processingClockIn ? '📷 Opening Camera...' : loading ? 'Processing...' : 'Clock In'}
                 </Text>
               </AnimatedButton>
 
               <AnimatedButton
                 colors={['#ff6b6b', '#c0392b']}
                 onPress={handleClockOut}
-                disabled={loading || processingClockIn || processingClockOut || (!overrideMode && !locationVerified)}
+                disabled={loading || processingClockIn || processingClockOut || !locationVerified}
               >
                 <Text style={styles.clockButtonText}>
-                  {processingClockOut ? (overrideMode ? '⏳ Processing...' : '📷 Opening Camera...') : loading ? 'Processing...' : 'Clock Out'}
+                  {processingClockOut ? '📷 Opening Camera...' : loading ? 'Processing...' : 'Clock Out'}
                 </Text>
               </AnimatedButton>
             </View>
           </CardContent>
         </Card>
+        )}
+
+        {/* Override Mode Interface - Tabbed for Manager/GM */}
+        {!hasExecutiveAccess && (isManager || isGeneralManager) && overrideMode && (
+          <>
+            {/* Tab Selector */}
+            <View style={styles.overrideTabContainer}>
+              <TouchableOpacity
+                style={[styles.overrideTab, overrideTab === 'clock_in' && styles.overrideTabActive]}
+                onPress={() => {
+                  setOverrideTab('clock_in');
+                  setSelectedStaff('');
+                }}
+              >
+                <Text style={[styles.overrideTabText, overrideTab === 'clock_in' && styles.overrideTabTextActive]}>
+                  Clock In
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.overrideTab, overrideTab === 'clock_out' && styles.overrideTabActiveOut]}
+                onPress={() => {
+                  setOverrideTab('clock_out');
+                  setSelectedStaff('');
+                }}
+              >
+                <Text style={[styles.overrideTabText, overrideTab === 'clock_out' && styles.overrideTabTextActive]}>
+                  Clock Out
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <Card style={styles.card}>
+              <CardHeader>
+                <CardTitle>{overrideTab === 'clock_in' ? 'Override Clock In' : 'Override Clock Out'}</CardTitle>
+                <CardDescription>
+                  {overrideTab === 'clock_in' 
+                    ? 'Clock in for staff or supervisors without location verification' 
+                    : 'Clock out for staff or supervisors without location verification'}
+                </CardDescription>
+              </CardHeader>
+              <CardContent style={styles.cardContent}>
+                {/* Location Dropdown */}
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>Location</Text>
+                  <SearchableDropdown
+                    options={[
+                      { label: 'Select location', value: '' },
+                      ...locations.map(l => ({ label: l.name, value: l.id, code: l.code || '' }))
+                    ]}
+                    selectedValue={currentLocationId}
+                    onValueChange={handleLocationChange}
+                    placeholder="Select location to filter"
+                    style={styles.dropdown}
+                    searchPlaceholder="Search by location name..."
+                    getSearchText={(option) => {
+                      if (!option || option.value === '') return '';
+                      const name = option.label || '';
+                      const code = option.code || '';
+                      return `${name} ${code}`.toLowerCase();
+                    }}
+                  />
+                </View>
+
+                {/* Override Mode Radio Buttons */}
+                <View style={styles.overrideCheckboxContainer}>
+                  <Text style={styles.overrideCheckboxLabel}>Select who to {overrideTab === 'clock_in' ? 'clock in' : 'clock out'}:</Text>
+                  <View style={styles.checkboxRow}>
+                    <TouchableOpacity 
+                      style={[styles.checkbox, overrideForSupervisor && styles.checkboxChecked]}
+                      onPress={() => {
+                        setOverrideForSupervisor(true);
+                        setOverrideForStaff(false);
+                        setSelectedStaff('');
+                      }}
+                    >
+                      <Text style={[styles.checkboxText, overrideForSupervisor && styles.checkboxTextChecked]}>
+                        {overrideForSupervisor ? '◉' : '○'} Supervisor
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity 
+                      style={[styles.checkbox, overrideForStaff && styles.checkboxChecked]}
+                      onPress={() => {
+                        setOverrideForStaff(true);
+                        setOverrideForSupervisor(false);
+                        setSelectedStaff('');
+                      }}
+                    >
+                      <Text style={[styles.checkboxText, overrideForStaff && styles.checkboxTextChecked]}>
+                        {overrideForStaff ? '◉' : '○'} Staff
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* Staff/Supervisor Selection */}
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>{overrideForSupervisor ? 'Supervisor' : overrideForStaff ? 'Staff Member' : 'Select Type Above'}</Text>
+                  <SearchableDropdown
+                    options={[
+                      { label: 'Select person', value: '' },
+                      ...filteredStaff.map(s => ({ 
+                        label: `${s.name || s.email}${s.empNo ? ` (ID: ${s.empNo})` : ''}`, 
+                        value: s.user_id,
+                        empNo: s.empNo || null,
+                        name: s.name || s.email,
+                      }))
+                    ]}
+                    selectedValue={selectedStaff}
+                    onValueChange={setSelectedStaff}
+                    placeholder={
+                      !overrideForSupervisor && !overrideForStaff 
+                        ? 'Select Supervisor or Staff checkbox first' 
+                        : filteredStaff.length === 0 
+                          ? overrideTab === 'clock_in'
+                            ? 'All users already clocked in'
+                            : 'No users available to clock out'
+                          : overrideTab === 'clock_in' 
+                            ? 'Select person to clock in'
+                            : 'Select person to clock out'
+                    }
+                    style={styles.dropdown}
+                    disabled={!overrideForSupervisor && !overrideForStaff}
+                    searchPlaceholder="Search by name or employee ID..."
+                    getSearchText={(option) => {
+                      if (!option || option.value === '') return '';
+                      const name = option.name || option.label || '';
+                      const empNo = option.empNo ? String(option.empNo) : '';
+                      return `${name} ${empNo}`.toLowerCase();
+                    }}
+                  />
+                </View>
+
+                {/* Info Box */}
+                <View style={styles.overrideInfoBox}>
+                  <Text style={styles.overrideInfoText}>
+                    Override: {overrideTab === 'clock_in' ? 'Clock in' : 'Clock out'} for staff/supervisors without location verification.
+                    {isManager && ' You can only manage supervisors assigned to you and their staff.'}
+                    {isGeneralManager && currentUserDepartment && ` You can manage all from your department (${currentUserDepartment}).`}
+                  </Text>
+                </View>
+
+                {/* Action Button */}
+                {overrideTab === 'clock_in' ? (
+                  <AnimatedButton
+                    colors={['#2ecc71', '#27ae60']}
+                    onPress={handleClockIn}
+                    disabled={loading || processingClockIn || !selectedStaff}
+                    style={styles.fullWidthButton}
+                  >
+                    <Text style={styles.clockButtonText}>
+                      {processingClockIn ? '⏳ Processing...' : loading ? 'Processing...' : 'Clock In'}
+                    </Text>
+                  </AnimatedButton>
+                ) : (
+                  <AnimatedButton
+                    colors={['#ff6b6b', '#c0392b']}
+                    onPress={handleClockOut}
+                    disabled={loading || processingClockOut || !selectedStaff}
+                    style={styles.fullWidthButton}
+                  >
+                    <Text style={styles.clockButtonText}>
+                      {processingClockOut ? '⏳ Processing...' : loading ? 'Processing...' : 'Clock Out'}
+                    </Text>
+                  </AnimatedButton>
+                )}
+
+                {/* Disable Override Button */}
+                <TouchableOpacity
+                  style={styles.disableOverrideButton}
+                  onPress={() => {
+                    setOverrideMode(false);
+                    if (isManagerOrGM) {
+                      const officeLocations = allLocations.filter(l => isOfficeLocation(l));
+                      setLocations(officeLocations);
+                      if (officeLocations.length > 0) setCurrentLocationId(officeLocations[0].id);
+                      const meId = currentUserProfile?.user_id;
+                      if (meId) {
+                        setSelectedStaff(meId);
+                        setCurrentSupervisorId(meId);
+                      }
+                    }
+                    setOverrideForSupervisor(false);
+                    setOverrideForStaff(false);
+                    setLocationVerified(false);
+                  }}
+                >
+                  <Text style={styles.disableOverrideButtonText}>← Back to Normal</Text>
+                </TouchableOpacity>
+              </CardContent>
+            </Card>
+          </>
         )}
 
         {/* Today's Attendance - Visible for all roles */}
@@ -1143,7 +1359,7 @@ const styles = StyleSheet.create({
   card: {
     backgroundColor: 'white',
     margin: 16,
-    marginTop: 0,
+    // marginTop: 0,
     borderRadius: 12,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
@@ -1205,7 +1421,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    margin: 16,
   },
   buttonRow: {
     flexDirection: 'row',
@@ -1265,6 +1481,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
     marginTop: 2,
+    // marginBottom: 2,
   },
   supervisorText: {
     fontSize: 12,
@@ -1303,6 +1520,98 @@ const styles = StyleSheet.create({
     color: '#ff6b6b',
     marginTop: 4,
     fontStyle: 'italic',
+  },
+  overrideCheckboxContainer: {
+    marginBottom: 16,
+    padding: 12,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e9ecef',
+  },
+  overrideCheckboxLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#495057',
+    marginBottom: 10,
+  },
+  checkboxRow: {
+    flexDirection: 'row',
+    gap: 16,
+  },
+  checkbox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#dee2e6',
+  },
+  checkboxChecked: {
+    backgroundColor: '#e7f5ff',
+    borderColor: '#339af0',
+  },
+  checkboxText: {
+    fontSize: 15,
+    color: '#495057',
+    fontWeight: '500',
+  },
+  checkboxTextChecked: {
+    color: '#1971c2',
+  },
+  // Override Tab Styles
+  overrideTabContainer: {
+    flexDirection: 'row',
+    backgroundColor: 'white',
+    marginHorizontal: 16,
+    marginTop: 16,
+    borderRadius: 12,
+    padding: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  overrideTab: {
+    flex: 1,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  overrideTabActive: {
+    backgroundColor: '#2ecc71',
+  },
+  overrideTabActiveOut: {
+    backgroundColor: '#ff6b6b',
+  },
+  overrideTabText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#666',
+  },
+  overrideTabTextActive: {
+    color: 'white',
+  },
+  fullWidthButton: {
+    marginTop: 16,
+  },
+  disableOverrideButton: {
+    marginTop: 16,
+    paddingVertical: 12,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#dee2e6',
+    borderRadius: 8,
+    backgroundColor: '#f8f9fa',
+  },
+  disableOverrideButtonText: {
+    fontSize: 14,
+    color: '#6c757d',
+    fontWeight: '500',
   },
 });
 
