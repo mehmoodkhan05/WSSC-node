@@ -514,9 +514,6 @@ const SettingsScreen = () => {
     }
   };
 
-  // const navigateToScreen = (screenName) => { // Removed as we are not navigating
-  //   navigation.navigate(screenName);
-
   return (
     <View style={styles.container}>
       <View style={styles.header}>

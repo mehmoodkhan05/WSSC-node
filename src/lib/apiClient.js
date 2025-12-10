@@ -1,14 +1,18 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Constants from 'expo-constants';
 
-// API Base URL - default to local backend
-// IMPORTANT: This must point to the same backend that connects to your MongoDB database
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api';
+// API Base URL - prioritize app.config.js (most reliable for EAS builds)
+// Fallback chain: Constants.extra > process.env > localhost default
+const API_BASE_URL = 
+  Constants.expoConfig?.extra?.apiUrl || 
+  process.env.EXPO_PUBLIC_API_URL || 
+  'http://localhost:3000/api';
 
 // Debug: Log API URL (remove in production)
 if (__DEV__) {
   console.log('🔗 Frontend API Base URL:', API_BASE_URL);
-  console.log('📝 EXPO_PUBLIC_API_URL env:', process.env.EXPO_PUBLIC_API_URL || 'using default');
-  console.log('💡 Ensure this points to the backend server that uses the same MongoDB database');
+  console.log('📝 From app.config.js:', Constants.expoConfig?.extra?.apiUrl || 'not set');
+  console.log('📝 From process.env:', process.env.EXPO_PUBLIC_API_URL || 'not set');
 }
 
 // Storage keys
