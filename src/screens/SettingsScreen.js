@@ -57,7 +57,7 @@ const SettingsScreen = () => {
   const [pushLoading, setPushLoading] = useState(false);
   const [locationTracking, setLocationTracking] = useState(false);
   const [locationTrackingLoading, setLocationTrackingLoading] = useState(false);
-  const [autoClockOut, setAutoClockOut] = useState(false);
+  // const [autoClockOut, setAutoClockOut] = useState(false);
   const [hasActiveShift, setHasActiveShift] = useState(false);
   const isActiveRef = useRef(true);
   
@@ -465,7 +465,7 @@ const SettingsScreen = () => {
         { text: 'Reset', style: 'destructive', onPress: async () => {
           const pushReset = await handleNotificationToggle(true);
           setLocationTracking(isTrackingForced ? hasActiveShift : false);
-          setAutoClockOut(false);
+          // setAutoClockOut(false);
           if (!pushReset) {
             Alert.alert(
               'Notifications',
@@ -557,7 +557,7 @@ const SettingsScreen = () => {
           />
         </View>
 
-        <View style={styles.settingItem}>
+        {/* <View style={styles.settingItem}>
           <View style={styles.settingInfo}>
             <Text style={styles.settingTitle}>Auto Clock-out</Text>
             <Text style={styles.settingDescription}>
@@ -568,7 +568,7 @@ const SettingsScreen = () => {
             value={autoClockOut}
             onValueChange={setAutoClockOut}
           />
-        </View>
+        </View> */}
       </View>
 
       {/* Admin Features - CEO/Super Admin only */}
