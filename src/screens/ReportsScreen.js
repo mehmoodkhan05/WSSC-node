@@ -102,9 +102,12 @@ const ReportsScreen = () => {
     
     attendanceData.forEach(record => {
       const staffId = record.staff_id || 'unknown';
-      const empNo = record.emp_no || null;
+      // Use empNo from DB table (handle both camelCase and snake_case)
+      const empNo = record.empNo || record.emp_no || null;
+      // Use role from DB table
       const role = record.role || null;
-      const department = record.department || null;
+      // Use empDeptt from DB table (handle both camelCase and snake_case)
+      const empDeptt = record.empDeptt || record.emp_deptt || null;
       const location = record.area_name || 'N/A';
       
       if (!grouped.has(staffId)) {
@@ -112,7 +115,7 @@ const ReportsScreen = () => {
           staffId,
           empNo,
           role,
-          department,
+          department: empDeptt, // Use empDeptt as department
           location,
           staffName: record.staff_name || 'Unknown',
           attendance: new Map(),
@@ -127,8 +130,8 @@ const ReportsScreen = () => {
       if (!employee.role && role) {
         employee.role = role;
       }
-      if (!employee.department && department) {
-        employee.department = department;
+      if (!employee.department && empDeptt) {
+        employee.department = empDeptt;
       }
       if (!employee.location && location) {
         employee.location = location;

@@ -14,6 +14,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { fetchAttendanceReport } from '../lib/attendance';
 import { fetchProfiles } from '../lib/staff';
 import SimpleDropdown from '../components/ui/SimpleDropdown';
+import SearchableDropdown from '../components/ui/SearchableDropdown';
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -179,12 +180,25 @@ const DetailedTimeReportScreen = () => {
     value: index,
   }));
 
+  // Sort staff list alphabetically by name
+  const sortedStaffList = [...staffList].sort((a, b) => {
+    const nameA = (a.full_name || a.email || '').toLowerCase();
+    const nameB = (b.full_name || b.email || '').toLowerCase();
+    return nameA.localeCompare(nameB);
+  });
+
   const staffOptions = [
     { label: 'Select Staff', value: '' },
-    ...staffList.map(staff => ({
-      label: staff.full_name || staff.email,
-      value: staff.user_id,
-    })),
+    ...sortedStaffList.map(staff => {
+      // Handle both emp_no (from /api/users) and empNo (from /api/users/staff)
+      const empNo = staff.empNo || staff.emp_no || null;
+      return {
+        label: `${staff.full_name || staff.email}${empNo ? ` (ID: ${empNo})` : ''}`,
+        value: staff.user_id,
+        empNo: empNo,
+        name: staff.full_name || staff.email,
+      };
+    }),
   ];
 
   return (
@@ -217,11 +231,18 @@ const DetailedTimeReportScreen = () => {
 
         <View style={styles.filterItem}>
           <Text style={styles.filterLabel}>Staff Member *</Text>
-          <SimpleDropdown
+          <SearchableDropdown
             options={staffOptions}
             selectedValue={selectedStaff}
             onValueChange={setSelectedStaff}
             placeholder="Select Staff"
+            searchPlaceholder="Search by name, email, or employee ID..."
+            getSearchText={(option) => {
+              if (!option || option.value === '') return '';
+              const name = option.name || option.label || '';
+              const empNo = option.empNo ? String(option.empNo) : '';
+              return `${name} ${empNo}`.toLowerCase();
+            }}
           />
         </View>
 

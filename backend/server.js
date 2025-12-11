@@ -2,9 +2,11 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const dotenv = require('dotenv');
+const path = require('path');
 const net = require('net');
 
-dotenv.config();
+// Load .env file from backend directory
+dotenv.config({ path: path.join(__dirname, '.env') });
 
 const app = express();
 

@@ -556,6 +556,10 @@ router.get('/today', protect, async (req, res) => {
 router.get('/report', protect, async (req, res) => {
   try {
     const { dateFrom, dateTo, supervisorId, areaId, status = 'all' } = req.query;
+    const currentUser = req.user;
+    const currentUserRole = normalizeRole(currentUser.role);
+    const isCEOOrSuperAdmin = ['ceo', 'super_admin'].includes(currentUserRole);
+    const isGeneralManager = currentUserRole === 'general_manager';
 
     // Validate required fields (filter out 'undefined' and 'null' strings)
     const validDateFrom = dateFrom && dateFrom !== 'undefined' && dateFrom !== 'null' ? dateFrom : null;
@@ -585,28 +589,136 @@ router.get('/report', protect, async (req, res) => {
       query.status = status;
     }
 
+    // For General Manager: Filter by department
+    let departmentFilter = null;
+    if (isGeneralManager && !isCEOOrSuperAdmin) {
+      // Get General Manager's departments (prefer departments array, fallback to department)
+      const gmDepartments = currentUser.departments && currentUser.departments.length > 0
+        ? currentUser.departments
+        : currentUser.department
+        ? [currentUser.department]
+        : [];
+      
+      if (gmDepartments.length > 0) {
+        departmentFilter = gmDepartments;
+      } else {
+        // GM with no departments assigned - return empty results for security
+        return res.json({
+          success: true,
+          data: []
+        });
+      }
+    }
+
+    // Build user query - get all active users
+    const userQuery = { isActive: true };
+    
+    // Apply department filter for General Manager
+    if (departmentFilter && departmentFilter.length > 0) {
+      userQuery.$or = [
+        { empDeptt: { $in: departmentFilter } },
+        { department: { $in: departmentFilter } }
+      ];
+    }
+
+    // Fetch all active users (filtered by department if GM)
+    const allActiveUsers = await User.find(userQuery)
+      .select('fullName username email empNo empDeptt role department')
+      .sort({ fullName: 1 });
+
+    // Fetch attendance records for the date range
     const attendances = await Attendance.find(query)
-      .populate('staffId', 'fullName username email')
+      .populate('staffId', 'fullName username email empNo empDeptt role department')
       .populate('supervisorId', 'fullName username')
       .populate('ncLocationId', 'name code')
       .sort({ attendanceDate: -1, createdAt: -1 });
 
-    const formatted = attendances.map(att => ({
-      id: att._id,
-      staff_id: att.staffId?._id?.toString(),
-      staff_name: att.staffId?.fullName || att.staffId?.username || 'Unknown',
-      supervisor_id: att.supervisorId?._id?.toString(),
-      supervisor_name: att.supervisorId?.fullName || att.supervisorId?.username || 'Unknown',
-      nc_location_id: att.ncLocationId?._id?.toString(),
-      location_name: att.ncLocationId?.name || 'N/A',
-      date: att.attendanceDate,
-      clock_in: att.clockIn,
-      clock_out: att.clockOut,
-      status: att.status || 'Absent',
-      approval_status: att.approvalStatus || 'pending',
-      overtime: att.overtime || false,
-      double_duty: att.doubleDuty || false
-    }));
+    // Create a map of attendance records by staff_id and date
+    const attendanceMap = new Map();
+    attendances.forEach(att => {
+      if (att.staffId) {
+        const staffId = att.staffId._id.toString();
+        const dateKey = att.attendanceDate;
+        const key = `${staffId}_${dateKey}`;
+        attendanceMap.set(key, att);
+      }
+    });
+
+    // Generate all dates in the range
+    const dates = [];
+    const startDate = new Date(validDateFrom);
+    const endDate = new Date(validDateTo);
+    const currentDate = new Date(startDate);
+    
+    while (currentDate <= endDate) {
+      dates.push(new Date(currentDate).toISOString().split('T')[0]);
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+
+    // Create report entries for all active users
+    const formatted = [];
+    
+    allActiveUsers.forEach(user => {
+      const userId = user._id.toString();
+      
+      // For each date in the range, create an entry
+      dates.forEach(dateStr => {
+        const key = `${userId}_${dateStr}`;
+        const attendance = attendanceMap.get(key);
+        
+        if (attendance) {
+          // User has attendance record for this date
+          formatted.push({
+            id: attendance._id,
+            staff_id: userId,
+            staff_name: user.fullName || user.username || 'Unknown',
+            empNo: user.empNo || null,
+            emp_no: user.empNo || null,
+            empDeptt: user.empDeptt || null,
+            emp_deptt: user.empDeptt || null,
+            role: user.role || null,
+            supervisor_id: attendance.supervisorId?._id?.toString() || null,
+            supervisor_name: attendance.supervisorId?.fullName || attendance.supervisorId?.username || 'Unknown',
+            nc_location_id: attendance.ncLocationId?._id?.toString() || null,
+            location_name: attendance.ncLocationId?.name || 'N/A',
+            area_name: attendance.ncLocationId?.name || 'N/A',
+            attendance_date: dateStr,
+            date: dateStr,
+            clock_in: attendance.clockIn || null,
+            clock_out: attendance.clockOut || null,
+            status: attendance.status || 'Absent',
+            approval_status: attendance.approvalStatus || 'pending',
+            overtime: attendance.overtime || false,
+            double_duty: attendance.doubleDuty || false
+          });
+        } else {
+          // User has no attendance record for this date - mark as absent
+          formatted.push({
+            id: null,
+            staff_id: userId,
+            staff_name: user.fullName || user.username || 'Unknown',
+            empNo: user.empNo || null,
+            emp_no: user.empNo || null,
+            empDeptt: user.empDeptt || null,
+            emp_deptt: user.empDeptt || null,
+            role: user.role || null,
+            supervisor_id: null,
+            supervisor_name: 'N/A',
+            nc_location_id: null,
+            location_name: 'N/A',
+            area_name: 'N/A',
+            attendance_date: dateStr,
+            date: dateStr,
+            clock_in: null,
+            clock_out: null,
+            status: 'Absent',
+            approval_status: 'pending',
+            overtime: false,
+            double_duty: false
+          });
+        }
+      });
+    });
 
     res.json({
       success: true,

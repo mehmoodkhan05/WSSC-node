@@ -541,7 +541,6 @@ const styles = StyleSheet.create({
   },
   leftColumn: {
     flex: 1,
-    marginBottom: 16,
   },
   rightColumn: {
     flex: 1,
@@ -695,11 +694,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'space-between',
-    marginTop: 16,
+    marginTop: 0,
   },
   statsCardWrapper: {
     width: '48%',
-    marginBottom: 12,
   },
   overviewContent: {
     paddingVertical: 16,
@@ -885,7 +883,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   leadershipCard: {
-    marginTop: 24,
+    marginTop: 0,
   },
 });
 
