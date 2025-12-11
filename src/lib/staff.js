@@ -69,11 +69,47 @@ export async function fetchProfiles(includeInactive = false) {
 // Update user profile
 export async function updateUserProfile(userId, updates) {
   try {
-    const response = await apiClient.put(`/users/${userId}`, {
+    const sanitize = (value) => {
+      if (value === undefined) return undefined;
+      if (value === null) return null;
+      if (typeof value === 'string' && value.trim() === '') return null;
+      return value;
+    };
+
+    const payload = {
       full_name: updates.full_name,
-      role: updates.role
-    });
-    return { success: true };
+      role: updates.role,
+      profile_photo_url: sanitize(updates.profile_photo_url),
+      empFname: sanitize(updates.empFname),
+      empDeptt: sanitize(updates.empDeptt),
+      empJob: sanitize(updates.empJob),
+      empGrade: sanitize(updates.empGrade),
+      empCell1: sanitize(updates.empCell1),
+      empCell2: sanitize(updates.empCell2),
+      empFlg: sanitize(updates.empFlg),
+      empMarried: sanitize(updates.empMarried),
+      empGender: sanitize(updates.empGender),
+      empNo: sanitize(updates.empNo),
+      empCnic: sanitize(updates.empCnic),
+      shiftDays:
+        updates.shiftDays !== undefined
+          ? Number(updates.shiftDays)
+          : undefined,
+      shiftTime: sanitize(updates.shiftTime),
+      shiftStartTime: sanitize(updates.shiftStartTime),
+      shiftEndTime: sanitize(updates.shiftEndTime),
+      is_active:
+        typeof updates.is_active === 'boolean'
+          ? updates.is_active
+          : updates.isActive,
+    };
+
+    if (updates.password && updates.password.trim() !== '') {
+      payload.password = updates.password;
+    }
+
+    const response = await apiClient.put(`/users/${userId}`, payload);
+    return { success: true, data: response.data };
   } catch (error) {
     console.error('Error updating user profile:', error);
     throw error;

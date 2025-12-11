@@ -280,12 +280,32 @@ const UsersScreen = () => {
     }
     try {
       const { updateUserProfile } = require('../lib/staff');
-      const response = await updateUserProfile(editingUser.user_id, {
+      const payload = {
         full_name: fullName,
         role: role,
-        // Note: Employee fields and password updates may need separate endpoints
-        // For now, we'll just update basic profile
-      });
+        empNo,
+        empCnic,
+        empFname,
+        empDeptt,
+        empJob,
+        empGrade,
+        empCell1,
+        empCell2,
+        empFlg,
+        empMarried,
+        empGender,
+        shiftDays: shiftDays ? parseInt(shiftDays, 10) : undefined,
+        shiftTime,
+        shiftStartTime,
+        shiftEndTime,
+        isActive,
+      };
+
+      if (password && password.trim() !== '') {
+        payload.password = password;
+      }
+
+      const response = await updateUserProfile(editingUser.user_id, payload);
       Alert.alert('Success', 'User updated successfully');
       closeEditModal();
       await load();

@@ -18,7 +18,10 @@ import {
   ROLE,
   normalizeRole,
   hasExecutivePrivileges,
+  hasFullControl,
 } from '../lib/roles';
+import { fetchProfiles } from '../lib/staff';
+import SimpleDropdown from '../components/ui/SimpleDropdown';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as Print from 'expo-print';
@@ -46,14 +49,95 @@ const getAttendanceCode = (status) => {
   if (normalized === 'present') return 'P';
   if (normalized === 'late') return 'HD'; // Half-day for late
   if (normalized === 'on-leave' || normalized === 'onleave') return 'L';
+  if (normalized === 'overtime') return 'HO'; // Off-day overtime indicator
+  if (normalized === 'holiday' || normalized === 'off' || normalized === 'off-day') return 'H';
   if (normalized === 'absent') return 'A';
   return '';
+};
+
+// Identify weekend/off-days based on shift days per week (5-day: Sat+Sun off, 6-day: Sun off)
+const isOffDay = (shiftDays, date) => {
+  const day = date.getDay(); // 0 = Sun, 6 = Sat
+  if (shiftDays === 5) {
+    return day === 0 || day === 6;
+  }
+  // Default 6-day week: only Sunday off
+  return day === 0;
+};
+
+// Normalize shift days from record/user fields; default to 6 (only Sunday off)
+const parseShiftDays = (record) => {
+  const raw =
+    record?.shift_days ??
+    record?.shiftDays ??
+    record?.shift_days_per_week ??
+    record?.shiftdays ??
+    record?.shift ??
+    record?.shift_days_week ??
+    record?.shift_days_perweek ??
+    record?.shift_days_per_week ??
+    record?.shiftdays;
+  const parsed = parseInt(raw, 10);
+  if (!Number.isNaN(parsed) && (parsed === 5 || parsed === 6)) {
+    return parsed;
+  }
+  return 6;
 };
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'
 ];
+
+const DEPT_CODE_NAME_MAP = {
+  '11': 'Administration',
+  '12': 'Water Supply',
+  '13': 'Sanitation',
+  '14': 'Commercials',
+};
+
+const normalizeDeptCode = (value) => {
+  if (!value) return null;
+  const str = String(value).trim();
+  const digits = str.replace(/\D+/g, '');
+  return digits.length ? digits : str;
+};
+
+const formatDepartmentLabel = (dept) => {
+  if (!dept) return 'Unknown Department';
+  if (typeof dept === 'object') {
+    const named =
+      dept.name || dept.title || dept.label || dept.department_name || dept.departmentName;
+    if (named) return named;
+    dept = dept.value || dept.code || dept.id || dept._id;
+  }
+  const str = normalizeDeptCode(dept);
+  if (!str) return 'Unknown Department';
+  if (DEPT_CODE_NAME_MAP[str]) return DEPT_CODE_NAME_MAP[str];
+  if (/^\d+$/.test(str)) return `Department ${str}`;
+  return str
+    .split(/[_\s-]+/)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+};
+
+const makeDepartmentOption = (code, name) => {
+  const codeStr = code ? String(code).trim() : '';
+  const nameStr = name ? String(name).trim() : '';
+  const normalizedCode = normalizeDeptCode(codeStr);
+  const normalizedValue = normalizeDeptCode(codeStr || nameStr);
+  const value = normalizedValue || codeStr || nameStr;
+  if (!value) return null;
+  const mappedName = normalizedCode ? DEPT_CODE_NAME_MAP[normalizedCode] : null;
+  const sameCodeAndName = nameStr && codeStr && nameStr.trim().toLowerCase() === codeStr.trim().toLowerCase();
+  let label = nameStr || mappedName || codeStr;
+  if (nameStr && codeStr && nameStr.toLowerCase() !== codeStr.toLowerCase()) {
+    label = `${nameStr} (${mappedName || codeStr})`;
+  } else if ((sameCodeAndName || !nameStr) && mappedName) {
+    label = mappedName;
+  }
+  return { label: label || formatDepartmentLabel(value), value };
+};
 
 const ReportsScreen = () => {
   const { profile } = useAuth();
@@ -67,6 +151,10 @@ const ReportsScreen = () => {
   const [preparedBy, setPreparedBy] = useState('');
   const [approvedBy, setApprovedBy] = useState('');
   const [acceptedBy, setAcceptedBy] = useState('');
+  const [rawAttendanceData, setRawAttendanceData] = useState([]);
+  const [selectedDepartment, setSelectedDepartment] = useState('all');
+  const [departmentOptions, setDepartmentOptions] = useState([{ label: 'All Departments', value: 'all' }]);
+  const [departmentsLoading, setDepartmentsLoading] = useState(false);
 
   // Generate years list (current year ± 5 years)
   const years = useMemo(() => {
@@ -109,6 +197,7 @@ const ReportsScreen = () => {
       // Use empDeptt from DB table (handle both camelCase and snake_case)
       const empDeptt = record.empDeptt || record.emp_deptt || null;
       const location = record.area_name || 'N/A';
+      const shiftDays = parseShiftDays(record);
       
       if (!grouped.has(staffId)) {
         grouped.set(staffId, {
@@ -119,6 +208,7 @@ const ReportsScreen = () => {
           location,
           staffName: record.staff_name || 'Unknown',
           attendance: new Map(),
+          shiftDays,
         });
       }
       
@@ -136,11 +226,34 @@ const ReportsScreen = () => {
       if (!employee.location && location) {
         employee.location = location;
       }
+      if (!employee.shiftDays && shiftDays) {
+        employee.shiftDays = shiftDays;
+      }
       const date = record.attendance_date;
       if (date) {
+        const offDay = isOffDay(shiftDays, new Date(date));
+        const isMarkedAbsent = (record.status || '').toLowerCase() === 'absent';
+        const hasOvertime = record.overtime || false;
+
+        let codeOverride = getAttendanceCode(record.status);
+        let statusOverride = record.status;
+
+        if (offDay) {
+          if (hasOvertime) {
+            codeOverride = 'HO'; // Off-day overtime
+            statusOverride = 'overtime';
+          } else if (isMarkedAbsent) {
+            codeOverride = 'H';
+            statusOverride = 'holiday';
+          } else {
+            codeOverride = 'H';
+            statusOverride = 'holiday';
+          }
+        }
+
         employee.attendance.set(date, {
-          status: record.status,
-          code: getAttendanceCode(record.status),
+          status: statusOverride,
+          code: codeOverride,
           overtime: record.overtime || false,
           double_duty: record.double_duty || false,
         });
@@ -154,10 +267,24 @@ const ReportsScreen = () => {
       let absent = 0;
       let overtime = 0;
       let doubleDuty = 0;
+      let workingDays = 0; // excludes holidays
 
       getMonthDates.forEach(date => {
         const dateStr = formatDateForKey(date);
-        const att = emp.attendance.get(dateStr);
+        let att = emp.attendance.get(dateStr);
+        const offDay = isOffDay(emp.shiftDays || 6, date);
+
+        // If no attendance record and it's an off-day, mark as Holiday
+        if (!att && offDay) {
+          att = {
+            status: 'holiday',
+            code: 'H',
+            overtime: false,
+            double_duty: false,
+          };
+          emp.attendance.set(dateStr, att);
+        }
+
         if (att) {
           const code = att.code;
           if (code === 'P') present++;
@@ -166,8 +293,14 @@ const ReportsScreen = () => {
           else if (code === 'A') absent++;
           if (att.overtime) overtime++;
           if (att.double_duty) doubleDuty++;
+
+          if (code !== 'H') {
+            workingDays++;
+          }
         } else {
-          absent++; // No record means absent
+          // No record and not an off-day
+          absent++;
+          workingDays++;
         }
       });
 
@@ -179,13 +312,85 @@ const ReportsScreen = () => {
           absent,
           overtime,
           doubleDuty,
-          workingDays: getMonthDates.length,
+          workingDays,
         },
       };
     });
 
     return result.sort((a, b) => a.staffName.localeCompare(b.staffName));
   }, [attendanceData, getMonthDates]);
+
+  const userRole = normalizeRole(profile?.role);
+  const isGeneralManager = userRole === ROLE.GENERAL_MANAGER;
+  const isFullControlUser = hasFullControl(userRole);
+
+  const userDepartments = useMemo(() => {
+    const deptFields = [
+      ...(Array.isArray(profile?.departments) ? profile.departments : []),
+      profile?.department,
+      profile?.empDeptt,
+      profile?.emp_deptt,
+    ].filter(Boolean);
+    return Array.from(new Set(deptFields.map((d) => String(d).trim()))).filter(Boolean);
+  }, [profile]);
+
+  const matchesDepartment = (deptValue, targets) => {
+    if (!targets || targets.length === 0) return true;
+    const normalizedTargets = targets.map((d) => String(d).trim().toLowerCase());
+    const value = String(deptValue || '').trim().toLowerCase();
+    return value && normalizedTargets.includes(value);
+  };
+
+  const applyDepartmentFilter = useMemo(
+    () => (data) => {
+      if (!Array.isArray(data)) return [];
+      // General Manager: force assigned departments
+      if (isGeneralManager && userDepartments.length > 0) {
+        return data.filter((record) =>
+          matchesDepartment(record.empDeptt || record.emp_deptt || record.department, userDepartments)
+        );
+      }
+      // CEO/Super Admin with selected department
+      if (isFullControlUser && selectedDepartment && selectedDepartment !== 'all') {
+        return data.filter((record) =>
+          matchesDepartment(record.empDeptt || record.emp_deptt || record.department, [selectedDepartment])
+        );
+      }
+      return data;
+    },
+    [isGeneralManager, isFullControlUser, selectedDepartment, userDepartments]
+  );
+
+  useEffect(() => {
+    setAttendanceData(applyDepartmentFilter(rawAttendanceData));
+  }, [rawAttendanceData, applyDepartmentFilter]);
+
+  // Load departments for CEO/Super Admin
+  useEffect(() => {
+    const loadDepartments = async () => {
+      if (!isFullControlUser) return;
+      setDepartmentsLoading(true);
+      try {
+        const profiles = await fetchProfiles();
+        const deptMap = new Map();
+        (profiles || []).forEach((p) => {
+          const option = makeDepartmentOption(p.empDeptt || p.emp_deptt, p.department);
+          if (option) {
+            deptMap.set(option.value, option);
+          }
+        });
+        const options = Array.from(deptMap.values()).sort((a, b) =>
+          a.label.localeCompare(b.label)
+        );
+        setDepartmentOptions([{ label: 'All Departments', value: 'all' }, ...options]);
+      } catch (error) {
+        console.error('Failed to load departments', error);
+      } finally {
+        setDepartmentsLoading(false);
+      }
+    };
+    loadDepartments();
+  }, [isFullControlUser]);
 
   const handleGenerateReport = async () => {
     setLoading(true);
@@ -198,7 +403,7 @@ const ReportsScreen = () => {
         dateFrom,
         dateTo,
       });
-      setAttendanceData(data);
+      setRawAttendanceData(data);
     } catch (error) {
       console.error('Report error:', error);
       if (Platform.OS === 'web') {
@@ -219,7 +424,7 @@ const ReportsScreen = () => {
     const dateHeaders = getMonthDates.map(date => {
       const day = date.getDate();
       const dayName = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'][date.getDay()];
-      return `<th style="border: 1px solid #000; padding: 4px; font-size: 10px; text-align: center;">${day}<br/>${dayName}</th>`;
+      return `<th style="border: 1px solid #000; padding: 3px; font-size: 9px; text-align: center; width: 18px; min-width: 18px; line-height: 1.2;">${day}<br/><span style="font-size: 8px;">${dayName}</span></th>`;
     }).join('');
 
     // Build employee rows
@@ -228,15 +433,15 @@ const ReportsScreen = () => {
         const dateStr = formatDateForKey(date);
         const att = emp.attendance.get(dateStr);
         const code = att ? att.code : '';
-        return `<td style="border: 1px solid #000; padding: 0; font-size: 7px; text-align: center; width: 12px; min-width: 12px;">${code}</td>`;
+        return `<td style="border: 1px solid #000; padding: 0; font-size: 7px; text-align: center; width: 18px; min-width: 18px;">${code}</td>`;
       }).join('');
 
       return `
         <tr>
-          <td style="border: 1px solid #000; padding: 2px; font-size: 9px;">${emp.empNo || emp.staffId || ''}</td>
-          <td style="border: 1px solid #000; padding: 2px; font-size: 9px;">${emp.staffName}</td>
-          <td style="border: 1px solid #000; padding: 2px; font-size: 9px;">${formatRole(emp.role)}</td>
-          <td style="border: 1px solid #000; padding: 2px; font-size: 9px;">${emp.department || '-'}</td>
+          <td style="border: 1px solid #000; padding: 2px; font-size: 9px; width: 34px; min-width: 34px;">${emp.empNo || emp.staffId || ''}</td>
+          <td style="border: 1px solid #000; padding: 2px; font-size: 9px; width: 80px;">${emp.staffName}</td>
+          <td style="border: 1px solid #000; padding: 2px; font-size: 9px; width: 60px;">${formatRole(emp.role)}</td>
+          <td style="border: 1px solid #000; padding: 2px; font-size: 9px; width: 26px; min-width: 26px;">${emp.department || '-'}</td>
           ${dateCells}
           <td style="border: 1px solid #000; padding: 2px; font-size: 9px; text-align: center;">${emp.summary.present}</td>
           <td style="border: 1px solid #000; padding: 4px; font-size: 9px; text-align: center;">${emp.summary.leave}</td>
@@ -316,6 +521,7 @@ const ReportsScreen = () => {
         border-collapse: collapse;
         font-size: 9px;
         margin-bottom: 20px;
+        table-layout: fixed;
       }
       th {
         background-color: #f0f0f0;
@@ -355,10 +561,10 @@ const ReportsScreen = () => {
     <table>
       <thead>
         <tr>
-          <th rowspan="2" style="border: 1px solid #000; padding: 2px;">E.No</th>
-          <th rowspan="2" style="border: 1px solid #000; padding: 2px;">Name</th>
-          <th rowspan="2" style="border: 1px solid #000; padding: 2px;">Role</th>
-          <th rowspan="2" style="border: 1px solid #000; padding: 2px;">Dept</th>
+          <th rowspan="2" style="border: 1px solid #000; padding: 2px; width: 34px; min-width: 34px;">E.No</th>
+          <th rowspan="2" style="border: 1px solid #000; padding: 2px; width: 80px;">Name</th>
+          <th rowspan="2" style="border: 1px solid #000; padding: 2px; width: 60px;">Role</th>
+          <th rowspan="2" style="border: 1px solid #000; padding: 2px; width: 26px; min-width: 26px;">Dept</th>
           <th colspan="${getMonthDates.length}" style="border: 1px solid #000; padding: 1px;">Daily Attendance</th>
           <th rowspan="2" style="border: 1px solid #000; padding: 2px;">P</th>
           <th rowspan="2" style="border: 1px solid #000; padding: 2px;">L</th>
@@ -499,16 +705,16 @@ const ReportsScreen = () => {
               (acc, _, index) => ({
                 ...acc,
                 [4 + index]: {
-                  cellWidth: 16,
-                  minCellWidth: 16,
+                  cellWidth: 18,
+                  minCellWidth: 18,
                   halign: 'center',
                 },
               }),
               {
-                0: { cellWidth: 45 },
-                1: { cellWidth: 100 },
-                2: { cellWidth: 65 },
-                3: { cellWidth: 45 },
+                0: { cellWidth: 34, minCellWidth: 34 },
+                1: { cellWidth: 80 },
+                2: { cellWidth: 60 },
+                3: { cellWidth: 26, minCellWidth: 26 },
               }
             ),
           });
@@ -737,6 +943,19 @@ const ReportsScreen = () => {
               placeholder="Enter name and ID"
             />
           </View>
+
+          {isFullControlUser && (
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Department</Text>
+              <SimpleDropdown
+                options={departmentOptions}
+                selectedValue={selectedDepartment}
+                onValueChange={setSelectedDepartment}
+                placeholder={departmentsLoading ? 'Loading...' : 'Select Department'}
+                disabled={departmentsLoading}
+              />
+            </View>
+          )}
 
           <TouchableOpacity
             style={[styles.generateButton, loading && styles.generateButtonDisabled]}
@@ -1115,13 +1334,13 @@ const styles = StyleSheet.create({
     color: '#374151',
   },
   empNoCell: {
-    width: 80,
+    width: 60,
   },
   empNameCell: {
-    width: 150,
+    width: 110,
   },
   roleCell: {
-    width: 100,
+    width: 70,
   },
   deptCell: {
     width: 100,

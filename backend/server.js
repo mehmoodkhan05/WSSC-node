@@ -4,6 +4,7 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const path = require('path');
 const net = require('net');
+const Attendance = require('./models/Attendance');
 
 // Load .env file from backend directory
 dotenv.config({ path: path.join(__dirname, '.env') });
@@ -248,6 +249,75 @@ const connectDB = async () => {
 };
 
 const PORT = process.env.PORT || 3000;
+const AUTO_CLOCK_OUT_INTERVAL_MS = parseInt(process.env.AUTO_CLOCK_OUT_INTERVAL_MS, 10) || (5 * 60 * 1000); // default every 5 minutes
+const AUTO_CLOCK_OUT_BUFFER_MINUTES = 30;
+
+// Helper: parse "HH:MM" to numbers
+function parseShiftTimeValue(timeStr, fallbackHour = 17, fallbackMinute = 0) {
+  if (!timeStr || typeof timeStr !== 'string') {
+    return { hour: fallbackHour, minute: fallbackMinute };
+  }
+  const parts = timeStr.split(':');
+  if (parts.length !== 2) {
+    return { hour: fallbackHour, minute: fallbackMinute };
+  }
+  const hour = parseInt(parts[0], 10);
+  const minute = parseInt(parts[1], 10);
+  if (isNaN(hour) || isNaN(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return { hour: fallbackHour, minute: fallbackMinute };
+  }
+  return { hour, minute };
+}
+
+// Helper: build a Date at the user's local shift end + buffer
+function getAutoClockOutDate(attendanceDate, shiftEndTime) {
+  const { hour, minute } = parseShiftTimeValue(shiftEndTime);
+  const shiftEnd = new Date(`${attendanceDate}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00`);
+  return new Date(shiftEnd.getTime() + AUTO_CLOCK_OUT_BUFFER_MINUTES * 60 * 1000);
+}
+
+async function runAutoClockOutSweep() {
+  const now = new Date();
+  const todayStr = now.toISOString().split('T')[0];
+
+  // Only target non-overtime & non-double-duty attendances that are still open
+  const openAttendances = await Attendance.find({
+    clockOut: null,
+    attendanceDate: { $lte: todayStr },
+    overtime: { $ne: true },
+    doubleDuty: { $ne: true }
+  }).populate('staffId', 'shiftEndTime fullName username');
+
+  let updatedCount = 0;
+
+  for (const attendance of openAttendances) {
+    const staff = attendance.staffId;
+    if (!staff) continue;
+
+    const autoClockOutTime = getAutoClockOutDate(attendance.attendanceDate, staff.shiftEndTime || '17:00');
+
+    if (now >= autoClockOutTime) {
+      // Clock out at the scheduled auto time (not "now") to avoid drifting if the job runs late
+      attendance.clockOut = autoClockOutTime;
+      attendance.clockedOutBy = null; // system auto action
+      await attendance.save();
+      updatedCount += 1;
+    }
+  }
+
+  if (updatedCount > 0) {
+    console.log(`ℹ️  Auto clock-out: closed ${updatedCount} attendance record(s).`);
+  }
+}
+
+function startAutoClockOutScheduler() {
+  setInterval(() => {
+    runAutoClockOutSweep().catch((error) => {
+      console.error('❌ Auto clock-out job failed:', error.message);
+      console.error(error.stack);
+    });
+  }, AUTO_CLOCK_OUT_INTERVAL_MS);
+}
 
 const isPortAvailable = (port) => {
   return new Promise((resolve) => {
@@ -274,6 +344,7 @@ const findAvailablePort = async (startPort, maxAttempts = 10) => {
 const startServer = async () => {
   try {
     await connectDB();
+    startAutoClockOutScheduler();
     
     let serverPort = PORT;
     const requestedPort = PORT;

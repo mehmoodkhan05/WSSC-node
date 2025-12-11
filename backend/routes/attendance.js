@@ -623,12 +623,12 @@ router.get('/report', protect, async (req, res) => {
 
     // Fetch all active users (filtered by department if GM)
     const allActiveUsers = await User.find(userQuery)
-      .select('fullName username email empNo empDeptt role department')
+      .select('fullName username email empNo empDeptt role department shiftDays')
       .sort({ fullName: 1 });
 
     // Fetch attendance records for the date range
     const attendances = await Attendance.find(query)
-      .populate('staffId', 'fullName username email empNo empDeptt role department')
+      .populate('staffId', 'fullName username email empNo empDeptt role department shiftDays')
       .populate('supervisorId', 'fullName username')
       .populate('ncLocationId', 'name code')
       .sort({ attendanceDate: -1, createdAt: -1 });
@@ -658,16 +658,32 @@ router.get('/report', protect, async (req, res) => {
     // Create report entries for all active users
     const formatted = [];
     
+    // Helper to detect weekly off-day based on shiftDays (5-day: Sat+Sun, 6-day: Sun only)
+    const isOffDay = (shiftDays, dateStr) => {
+      const day = new Date(dateStr).getDay(); // 0 = Sun, 6 = Sat
+      if (shiftDays === 5) {
+        return day === 0 || day === 6;
+      }
+      return day === 0;
+    };
+
     allActiveUsers.forEach(user => {
       const userId = user._id.toString();
+      const userShiftDays = user.shiftDays || 6;
       
       // For each date in the range, create an entry
       dates.forEach(dateStr => {
         const key = `${userId}_${dateStr}`;
         const attendance = attendanceMap.get(key);
+        const weeklyOff = isOffDay(userShiftDays, dateStr);
         
         if (attendance) {
           // User has attendance record for this date
+          const normalizedStatus = attendance.status || 'Absent';
+          const finalStatus = weeklyOff && normalizedStatus.toLowerCase() === 'absent'
+            ? 'Holiday'
+            : normalizedStatus;
+
           formatted.push({
             id: attendance._id,
             staff_id: userId,
@@ -677,6 +693,8 @@ router.get('/report', protect, async (req, res) => {
             empDeptt: user.empDeptt || null,
             emp_deptt: user.empDeptt || null,
             role: user.role || null,
+            shiftDays: userShiftDays,
+            shift_days: userShiftDays,
             supervisor_id: attendance.supervisorId?._id?.toString() || null,
             supervisor_name: attendance.supervisorId?.fullName || attendance.supervisorId?.username || 'Unknown',
             nc_location_id: attendance.ncLocationId?._id?.toString() || null,
@@ -686,13 +704,15 @@ router.get('/report', protect, async (req, res) => {
             date: dateStr,
             clock_in: attendance.clockIn || null,
             clock_out: attendance.clockOut || null,
-            status: attendance.status || 'Absent',
+            status: finalStatus,
             approval_status: attendance.approvalStatus || 'pending',
             overtime: attendance.overtime || false,
             double_duty: attendance.doubleDuty || false
           });
         } else {
           // User has no attendance record for this date - mark as absent
+          const finalStatus = weeklyOff ? 'Holiday' : 'Absent';
+
           formatted.push({
             id: null,
             staff_id: userId,
@@ -702,6 +722,8 @@ router.get('/report', protect, async (req, res) => {
             empDeptt: user.empDeptt || null,
             emp_deptt: user.empDeptt || null,
             role: user.role || null,
+            shiftDays: userShiftDays,
+            shift_days: userShiftDays,
             supervisor_id: null,
             supervisor_name: 'N/A',
             nc_location_id: null,
@@ -711,7 +733,7 @@ router.get('/report', protect, async (req, res) => {
             date: dateStr,
             clock_in: null,
             clock_out: null,
-            status: 'Absent',
+            status: finalStatus,
             approval_status: 'pending',
             overtime: false,
             double_duty: false

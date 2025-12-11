@@ -2,7 +2,6 @@ const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
 const { protect, authorize, normalizeRole, hasFullControl, checkDepartmentAccess } = require('../middleware/auth');
-const bcrypt = require('bcryptjs');
 
 // @route   GET /api/users
 // @desc    Get all users
@@ -319,7 +318,32 @@ router.post('/', protect, authorize('ceo', 'super_admin', 'general_manager', 'ma
 // @access  Private
 router.put('/:id', protect, async (req, res) => {
   try {
-    const { full_name, role, password, profile_photo_url } = req.body;
+    const {
+      full_name,
+      fullName,
+      role,
+      password,
+      profile_photo_url,
+      profilePhotoUrl,
+      empFname,
+      empDeptt,
+      empJob,
+      empGrade,
+      empCell1,
+      empCell2,
+      empFlg,
+      empMarried,
+      empGender,
+      empNo,
+      empCnic,
+      shiftDays,
+      shiftTime,
+      shiftStartTime,
+      shiftEndTime,
+      isActive,
+      is_active
+    } = req.body;
+
     const user = await User.findById(req.params.id);
 
     if (!user) {
@@ -338,12 +362,77 @@ router.put('/:id', protect, async (req, res) => {
       });
     }
 
-    if (full_name !== undefined) user.fullName = full_name;
-    if (role !== undefined && hasFullControl(req.user.role)) user.role = role;
-    if (password !== undefined && password.trim() !== '') {
-      user.password = await bcrypt.hash(password, 10);
+    const resolveString = (value) => {
+      if (value === undefined) return undefined;
+      if (value === null) return null;
+      if (typeof value === 'string' && value.trim() === '') return null;
+      return value;
+    };
+
+    // Basic profile fields
+    if (full_name !== undefined || fullName !== undefined) {
+      user.fullName = resolveString(full_name ?? fullName) ?? user.fullName;
     }
-    if (profile_photo_url !== undefined) user.profilePhotoUrl = profile_photo_url;
+
+    if (role !== undefined && hasFullControl(req.user.role)) {
+      user.role = role;
+    }
+
+    // Only set password if provided; pre-save hook will hash it
+    if (password !== undefined && password.trim() !== '') {
+      user.password = password;
+    }
+
+    if (profile_photo_url !== undefined || profilePhotoUrl !== undefined) {
+      user.profilePhotoUrl = resolveString(profile_photo_url ?? profilePhotoUrl);
+    }
+
+    // Employee fields
+    const fieldMap = {
+      empFname,
+      empDeptt,
+      empJob,
+      empGrade,
+      empCell1,
+      empCell2,
+      empFlg,
+      empMarried,
+      empGender,
+      empNo,
+      empCnic,
+    };
+
+    Object.entries(fieldMap).forEach(([key, value]) => {
+      if (value !== undefined) {
+        user[key] = resolveString(value);
+      }
+    });
+
+    // Shift fields
+    if (shiftDays !== undefined) {
+      const parsedShiftDays = Number(shiftDays);
+      if (!Number.isNaN(parsedShiftDays)) {
+        user.shiftDays = parsedShiftDays;
+      }
+    }
+
+    if (shiftTime !== undefined) {
+      user.shiftTime = shiftTime;
+    }
+
+    if (shiftStartTime !== undefined) {
+      user.shiftStartTime = shiftStartTime;
+    }
+
+    if (shiftEndTime !== undefined) {
+      user.shiftEndTime = shiftEndTime;
+    }
+
+    // Activation status - only admins should toggle this
+    const resolvedActive = is_active ?? isActive;
+    if (resolvedActive !== undefined && hasFullControl(req.user.role)) {
+      user.isActive = !!resolvedActive;
+    }
 
     await user.save();
 
@@ -353,7 +442,8 @@ router.put('/:id', protect, async (req, res) => {
         user_id: user._id,
         email: user.email,
         full_name: user.fullName,
-        role: user.role
+        role: user.role,
+        is_active: user.isActive,
       }
     });
   } catch (error) {
