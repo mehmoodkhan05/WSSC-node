@@ -51,6 +51,8 @@ const MarkAttendanceScreen = () => {
   const [overtime, setOvertime] = useState(false);
   const [doubleDuty, setDoubleDuty] = useState(false);
   const [clockAsSupervisor, setClockAsSupervisor] = useState(false);
+  const [supervisorTeamMode, setSupervisorTeamMode] = useState(false); // Toggle for supervisor to clock team
+  const [supervisorTab, setSupervisorTab] = useState('clock_in'); // 'clock_in' or 'clock_out' for team mode
   const [overrideMode, setOverrideMode] = useState(false);
   const [overrideForSupervisor, setOverrideForSupervisor] = useState(false);
   const [overrideForStaff, setOverrideForStaff] = useState(false);
@@ -135,6 +137,12 @@ const MarkAttendanceScreen = () => {
           const filteredLocs = (locs || []).filter(l => allowed.includes(l.id));
           setLocations(filteredLocs);
           if (filteredLocs.length > 0) setCurrentLocationId(filteredLocs[0].id);
+          // By default, supervisor clocks for himself
+          if (!supervisorTeamMode) {
+            setSelectedStaff(meId);
+          } else {
+            setSelectedStaff('');
+          }
         }
       } else if (role === ROLE.STAFF) {
         // For staff members, show only themselves and set their location/supervisor
@@ -391,7 +399,7 @@ const MarkAttendanceScreen = () => {
       setLoading(true);
       const result = await clockIn({
         staff_id: actedStaffId,
-        supervisor_id: clockAsSupervisor ? currentUserProfile?.user_id : currentSupervisorId,
+        supervisor_id: (isSupervisor && supervisorTeamMode) ? currentUserProfile?.user_id : (clockAsSupervisor ? currentUserProfile?.user_id : currentSupervisorId),
         nc_location_id: currentLocationId,
         overtime,
         double_duty: doubleDuty,
@@ -458,7 +466,7 @@ const MarkAttendanceScreen = () => {
       setLoading(true);
       const result = await clockOut({
         staff_id: actedStaffId,
-        supervisor_id: clockAsSupervisor ? currentUserProfile?.user_id : currentSupervisorId,
+        supervisor_id: (isSupervisor && supervisorTeamMode) ? currentUserProfile?.user_id : (clockAsSupervisor ? currentUserProfile?.user_id : currentSupervisorId),
         nc_location_id: currentLocationId,
         lat: lat || currentLat,
         lng: lng || currentLng,
@@ -648,6 +656,41 @@ const MarkAttendanceScreen = () => {
       return currentStaff ? [currentStaff] : [];
     }
 
+    // For Supervisor in team mode
+    if (isSupervisor && supervisorTeamMode) {
+      const currentUserId = currentUserProfile?.user_id;
+      
+      // Show staff assigned to this supervisor at the selected location
+      const myStaff = staff.filter(m => {
+        const assignedToMeAtLocation = assignments.some(a => 
+          a.staff_id === m.user_id && 
+          a.supervisor_id === currentUserId && 
+          a.nc_location_id === currentLocationId &&
+          a.is_active
+        );
+        return assignedToMeAtLocation;
+      });
+      
+      // Filter based on supervisor tab and today's attendance
+      if (supervisorTab === 'clock_in') {
+        // For Clock In tab: Hide users who already clocked in today
+        return myStaff.filter(person => {
+          const hasClockInToday = todayAttendance.some(att => 
+            att.staffId === person.user_id && att.clockIn
+          );
+          return !hasClockInToday;
+        });
+      } else if (supervisorTab === 'clock_out') {
+        // For Clock Out tab: Show only users who clocked in but haven't clocked out
+        return myStaff.filter(person => {
+          const attendance = todayAttendance.find(att => att.staffId === person.user_id);
+          return attendance && attendance.clockIn && !attendance.clockOut;
+        });
+      }
+      
+      return myStaff;
+    }
+
     // For Manager/General Manager in override mode
     if ((isManager || isGeneralManager) && overrideMode) {
       const currentUserId = currentUserProfile?.user_id;
@@ -833,8 +876,8 @@ const MarkAttendanceScreen = () => {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Location Verification - Hidden for CEO/Superadmin and when override mode is active */}
-        {!hasExecutiveAccess && !((isManager || isGeneralManager) && overrideMode) && (
+        {/* Location Verification - Hidden for CEO/Superadmin, when override mode is active, and when supervisor is in team mode */}
+        {!hasExecutiveAccess && !((isManager || isGeneralManager) && overrideMode) && !(isSupervisor && supervisorTeamMode) && (
           <Card style={styles.card}>
           <CardHeader>
             <CardTitle>Location Verification</CardTitle>
@@ -919,16 +962,168 @@ const MarkAttendanceScreen = () => {
         </Card>
         )}
 
-        {/* Attendance Details - Hidden for CEO/Superadmin */}
-        {!hasExecutiveAccess && !((isManager || isGeneralManager) && overrideMode) && (
+        {/* Supervisor Team Mode Interface - Tabbed for Supervisor */}
+        {!hasExecutiveAccess && isSupervisor && supervisorTeamMode && (
+          <>
+            {/* Tab Selector */}
+            <View style={styles.overrideTabContainer}>
+              <TouchableOpacity
+                style={[styles.overrideTab, supervisorTab === 'clock_in' && styles.overrideTabActive]}
+                onPress={() => {
+                  setSupervisorTab('clock_in');
+                  setSelectedStaff('');
+                }}
+              >
+                <Text style={[styles.overrideTabText, supervisorTab === 'clock_in' && styles.overrideTabTextActive]}>
+                  Clock In
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.overrideTab, supervisorTab === 'clock_out' && styles.overrideTabActiveOut]}
+                onPress={() => {
+                  setSupervisorTab('clock_out');
+                  setSelectedStaff('');
+                }}
+              >
+                <Text style={[styles.overrideTabText, supervisorTab === 'clock_out' && styles.overrideTabTextActive]}>
+                  Clock Out
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <Card style={styles.card}>
+              <CardHeader>
+                <CardTitle>{supervisorTab === 'clock_in' ? 'Clock In Team' : 'Clock Out Team'}</CardTitle>
+                <CardDescription>
+                  {supervisorTab === 'clock_in' 
+                    ? 'Clock in for your team members' 
+                    : 'Clock out for your team members'}
+                </CardDescription>
+              </CardHeader>
+              <CardContent style={styles.cardContent}>
+                {/* Location Dropdown */}
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>Location</Text>
+                  <SearchableDropdown
+                    options={[
+                      { label: 'Select location', value: '' },
+                      ...locations.map(l => ({ label: l.name, value: l.id, code: l.code || '' }))
+                    ]}
+                    selectedValue={currentLocationId}
+                    onValueChange={handleLocationChange}
+                    placeholder="Select location"
+                    style={styles.dropdown}
+                    disabled={!!locationVerified}
+                    searchPlaceholder="Search by location name..."
+                    getSearchText={(option) => {
+                      if (!option || option.value === '') return '';
+                      const name = option.label || '';
+                      const code = option.code || '';
+                      return `${name} ${code}`.toLowerCase();
+                    }}
+                  />
+                </View>
+
+                {/* Staff Selection */}
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>Team Member</Text>
+                  <SearchableDropdown
+                    options={[
+                      { label: 'Select team member', value: '' },
+                      ...filteredStaff.map(s => ({ 
+                        label: `${s.name || s.email}${s.empNo ? ` (ID: ${s.empNo})` : ''}`, 
+                        value: s.user_id,
+                        empNo: s.empNo || null,
+                        name: s.name || s.email,
+                      }))
+                    ]}
+                    selectedValue={selectedStaff}
+                    onValueChange={setSelectedStaff}
+                    placeholder={
+                      filteredStaff.length === 0 
+                        ? supervisorTab === 'clock_in'
+                          ? 'All team members already clocked in'
+                          : 'No team members available to clock out'
+                        : supervisorTab === 'clock_in' 
+                          ? 'Select team member to clock in'
+                          : 'Select team member to clock out'
+                    }
+                    style={styles.dropdown}
+                    disabled={!!locationVerified}
+                    searchPlaceholder="Search by name or employee ID..."
+                    getSearchText={(option) => {
+                      if (!option || option.value === '') return '';
+                      const name = option.name || option.label || '';
+                      const empNo = option.empNo ? String(option.empNo) : '';
+                      return `${name} ${empNo}`.toLowerCase();
+                    }}
+                  />
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.verifyButton, locationVerified && styles.verifiedButton]}
+                  onPress={handleVerifyLocation}
+                  disabled={locationVerified || !currentLocationId || verifyingLocation}
+                >
+                  <Text style={styles.verifyButtonText}>
+                    {verifyingLocation ? '⏳ Verifying Location...' : locationVerified ? '✓ Location Verified' : 'Verify Location'}
+                  </Text>
+                </TouchableOpacity>
+
+                {/* Action Button */}
+                {supervisorTab === 'clock_in' ? (
+                  <AnimatedButton
+                    colors={['#2ecc71', '#27ae60']}
+                    onPress={handleClockIn}
+                    disabled={loading || processingClockIn || processingClockOut || !locationVerified || !selectedStaff}
+                    style={styles.fullWidthButton}
+                  >
+                    <Text style={styles.clockButtonText}>
+                      {processingClockIn ? '📷 Opening Camera...' : loading ? 'Processing...' : 'Clock In'}
+                    </Text>
+                  </AnimatedButton>
+                ) : (
+                  <AnimatedButton
+                    colors={['#ff6b6b', '#c0392b']}
+                    onPress={handleClockOut}
+                    disabled={loading || processingClockIn || processingClockOut || !locationVerified || !selectedStaff}
+                    style={styles.fullWidthButton}
+                  >
+                    <Text style={styles.clockButtonText}>
+                      {processingClockOut ? '📷 Opening Camera...' : loading ? 'Processing...' : 'Clock Out'}
+                    </Text>
+                  </AnimatedButton>
+                )}
+
+                {/* Disable Team Mode Button */}
+                <TouchableOpacity
+                  style={styles.disableOverrideButton}
+                  onPress={() => {
+                    setSupervisorTeamMode(false);
+                    const meId = currentUserProfile?.user_id;
+                    if (meId) {
+                      setSelectedStaff(meId);
+                    }
+                    setLocationVerified(false);
+                  }}
+                >
+                  <Text style={styles.disableOverrideButtonText}>← Clock for Myself</Text>
+                </TouchableOpacity>
+              </CardContent>
+            </Card>
+          </>
+        )}
+
+        {/* Attendance Details - Hidden for CEO/Superadmin and Supervisor in team mode */}
+        {!hasExecutiveAccess && !((isManager || isGeneralManager) && overrideMode) && !(isSupervisor && supervisorTeamMode) && (
           <Card style={styles.card}>
           <CardHeader>
             <CardTitle>Attendance Details</CardTitle>
             <CardDescription>Select staff and mark attendance</CardDescription>
           </CardHeader>
           <CardContent style={styles.cardContent}>
-            {/* Hide staff dropdown when Manager/GM is clocking themselves (not in override mode) */}
-            {!((isManager || isGeneralManager) && !overrideMode) ? (
+            {/* Hide staff dropdown when Manager/GM is clocking themselves (not in override mode) or Supervisor is clocking themselves */}
+            {!((isManager || isGeneralManager) && !overrideMode) && !(isSupervisor && !supervisorTeamMode) ? (
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Staff Member</Text>
                 <SearchableDropdown
@@ -964,20 +1159,26 @@ const MarkAttendanceScreen = () => {
               </View>
             )}
 
-            {isSupervisor && (
+            {isSupervisor && !supervisorTeamMode && (
               <View style={styles.switchContainer}>
-                <Text style={styles.label}>Clock as Supervisor</Text>
+                <Text style={styles.label}>Clock for Team</Text>
                 <Switch
-                  value={clockAsSupervisor}
+                  value={supervisorTeamMode}
                   onValueChange={(v) => {
                     const val = Boolean(v);
-                    setClockAsSupervisor(val);
+                    setSupervisorTeamMode(val);
                     if (val) {
-                      // set selectedStaff to supervisor's own id
-                      setSelectedStaff(currentUserProfile?.user_id || '');
-                    } else {
-                      // clear selection when toggled off
+                      // Enter team mode: clear staff selection and reset tab
                       setSelectedStaff('');
+                      setSupervisorTab('clock_in');
+                      setLocationVerified(false);
+                    } else {
+                      // Exit team mode: set back to self
+                      const meId = currentUserProfile?.user_id;
+                      if (meId) {
+                        setSelectedStaff(meId);
+                      }
+                      setLocationVerified(false);
                     }
                   }}
                 />
