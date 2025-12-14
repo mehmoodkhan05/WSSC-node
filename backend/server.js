@@ -13,7 +13,7 @@ const app = express();
 
 let authRoutes, userRoutes, attendanceRoutes, locationRoutes, assignmentRoutes;
 let leaveRoutes, dashboardRoutes, approvalRoutes, performanceRoutes;
-let systemRoutes, liveTrackingRoutes, notificationRoutes, holidayRoutes;
+let systemRoutes, liveTrackingRoutes, notificationRoutes, holidayRoutes, zoneRoutes, departmentRoutes;
 
 try {
   authRoutes = require('./routes/auth');
@@ -29,6 +29,8 @@ try {
   liveTrackingRoutes = require('./routes/liveTracking');
   notificationRoutes = require('./routes/notifications');
   holidayRoutes = require('./routes/holidays');
+  zoneRoutes = require('./routes/zones');
+  departmentRoutes = require('./routes/departments');
 } catch (error) {
   console.error('❌ Error loading routes:', error.message);
   console.error(error.stack);
@@ -166,7 +168,9 @@ app.get('/api', (req, res) => {
         performance: '/api/performance - Performance reviews',
         system: '/api/system - System configuration',
         liveTracking: '/api/live-tracking - Live location tracking',
-        holidays: '/api/holidays - Company holidays management'
+        holidays: '/api/holidays - Company holidays management',
+        departments: '/api/departments - Department management',
+        departments: '/api/departments - Department management'
       }
     },
     server: {
@@ -191,6 +195,8 @@ app.use('/api/system', systemRoutes);
 app.use('/api/live-tracking', liveTrackingRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/holidays', holidayRoutes);
+app.use('/api/zones', zoneRoutes);
+app.use('/api/departments', departmentRoutes);
 
 app.use((req, res) => {
   res.status(404).json({
@@ -344,6 +350,15 @@ const findAvailablePort = async (startPort, maxAttempts = 10) => {
 const startServer = async () => {
   try {
     await connectDB();
+    
+    // Seed departments if they don't exist
+    try {
+      const { seedDepartments } = require('./scripts/seedDepartments');
+      await seedDepartments();
+    } catch (error) {
+      console.warn('⚠️  Could not seed departments (this is OK if they already exist):', error.message);
+    }
+    
     startAutoClockOutScheduler();
     
     let serverPort = PORT;

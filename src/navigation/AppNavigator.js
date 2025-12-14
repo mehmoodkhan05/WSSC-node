@@ -21,6 +21,7 @@ import LiveTrackingScreen from '../screens/LiveTrackingScreen';
 import AssignmentsScreen from '../screens/AssignmentsScreen';
 import UsersScreen from '../screens/UsersScreen';
 import LocationsScreen from '../screens/LocationsScreen';
+import DepartmentsManagementScreen from '../screens/DepartmentsManagementScreen';
 // Import auth context
 import { AuthProvider, useAuth } from '../contexts/AuthContext';
 
@@ -118,6 +119,7 @@ function AppNavigator() {
         <Stack.Screen name="Assignments" component={AssignmentsScreen} options={{ headerShown: true, title: 'Assignments' }} />
         <Stack.Screen name="Users" component={UsersScreen} options={{ headerShown: true, title: 'Users' }} />
         <Stack.Screen name="Locations" component={LocationsScreen} options={{ headerShown: true, title: 'NC Locations' }} />
+        <Stack.Screen name="DepartmentsManagement" component={DepartmentsManagementScreen} options={{ headerShown: true, title: 'Departments Management' }} />
       </Stack.Navigator>
     </NavigationContainer>
   );

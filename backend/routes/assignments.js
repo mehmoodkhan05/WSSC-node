@@ -4,6 +4,7 @@ const StaffAssignment = require('../models/StaffAssignment');
 const SupervisorLocation = require('../models/SupervisorLocation');
 const User = require('../models/User');
 const Location = require('../models/Location');
+const Zone = require('../models/Zone');
 const { protect, authorize } = require('../middleware/auth');
 
 // @route   GET /api/assignments
@@ -14,7 +15,14 @@ router.get('/', protect, async (req, res) => {
     const assignments = await StaffAssignment.find({ isActive: true })
       .populate('staffId', 'fullName username email')
       .populate('supervisorId', 'fullName username email')
-      .populate('ncLocationId', 'name code')
+      .populate('zoneId', 'name centerLat centerLng radiusMeters')
+      .populate({
+        path: 'zoneId',
+        populate: {
+          path: 'locationId',
+          select: 'name code'
+        }
+      })
       .sort({ createdAt: -1 });
 
     const formatted = assignments.map(ass => ({
@@ -23,8 +31,12 @@ router.get('/', protect, async (req, res) => {
       staff_name: ass.staffId?.fullName || ass.staffId?.username || 'Unknown',
       supervisor_id: ass.supervisorId?._id?.toString(),
       supervisor_name: ass.supervisorId?.fullName || ass.supervisorId?.username || 'Unknown',
-      nc_location_id: ass.ncLocationId?._id?.toString(),
-      location_name: ass.ncLocationId?.name || 'N/A',
+      zone_id: ass.zoneId?._id?.toString(),
+      zone_name: ass.zoneId?.name || 'N/A',
+      location_id: ass.zoneId?.locationId?._id?.toString(),
+      location_name: ass.zoneId?.locationId?.name || 'N/A',
+      // Legacy fields for backward compatibility
+      nc_location_id: ass.zoneId?.locationId?._id?.toString(),
       is_active: ass.isActive
     }));
 
@@ -45,12 +57,21 @@ router.get('/', protect, async (req, res) => {
 // @access  Private/Admin
 router.post('/', protect, authorize('ceo', 'super_admin', 'general_manager', 'manager'), async (req, res) => {
   try {
-    const { staff_id, supervisor_id, nc_location_id } = req.body;
+    const { staff_id, supervisor_id, zone_id } = req.body;
 
-    if (!staff_id || !supervisor_id || !nc_location_id) {
+    if (!staff_id || !supervisor_id || !zone_id) {
       return res.status(400).json({
         success: false,
-        error: 'staff_id, supervisor_id, and nc_location_id are required'
+        error: 'staff_id, supervisor_id, and zone_id are required'
+      });
+    }
+
+    // Verify zone exists
+    const zone = await Zone.findById(zone_id);
+    if (!zone) {
+      return res.status(404).json({
+        success: false,
+        error: 'Zone not found'
       });
     }
 
@@ -63,14 +84,21 @@ router.post('/', protect, authorize('ceo', 'super_admin', 'general_manager', 'ma
     const assignment = await StaffAssignment.create({
       staffId: staff_id,
       supervisorId: supervisor_id,
-      ncLocationId: nc_location_id,
+      zoneId: zone_id,
+      ncLocationId: zone.locationId, // Keep for backward compatibility
       isActive: true
     });
 
     const populated = await StaffAssignment.findById(assignment._id)
       .populate('staffId', 'fullName username')
       .populate('supervisorId', 'fullName username')
-      .populate('ncLocationId', 'name');
+      .populate({
+        path: 'zoneId',
+        populate: {
+          path: 'locationId',
+          select: 'name code'
+        }
+      });
 
     res.status(201).json({
       success: true,
@@ -80,8 +108,12 @@ router.post('/', protect, authorize('ceo', 'super_admin', 'general_manager', 'ma
         staff_name: populated.staffId?.fullName || 'Unknown',
         supervisor_id: populated.supervisorId?._id?.toString(),
         supervisor_name: populated.supervisorId?.fullName || 'Unknown',
-        nc_location_id: populated.ncLocationId?._id?.toString(),
-        location_name: populated.ncLocationId?.name || 'N/A'
+        zone_id: populated.zoneId?._id?.toString(),
+        zone_name: populated.zoneId?.name || 'N/A',
+        location_id: populated.zoneId?.locationId?._id?.toString(),
+        location_name: populated.zoneId?.locationId?.name || 'N/A',
+        // Legacy fields
+        nc_location_id: populated.zoneId?.locationId?._id?.toString()
       }
     });
   } catch (error) {

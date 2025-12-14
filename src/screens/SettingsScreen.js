@@ -596,6 +596,16 @@ const SettingsScreen = () => {
             </Text>
           </TouchableOpacity>
 
+          <TouchableOpacity
+            style={[styles.button, styles.adminButton]}
+            onPress={() => navigation.navigate('DepartmentsManagement')}
+          >
+            <Text style={styles.adminButtonText}>Departments</Text>
+            <Text style={styles.buttonDescription}>
+              Manage organization departments
+            </Text>
+          </TouchableOpacity>
+
           {/* Attendance Settings */}
           <View style={styles.attendanceSettingsContainer}>
             <Text style={styles.attendanceSettingsTitle}>Attendance Settings</Text>

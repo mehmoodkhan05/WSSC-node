@@ -30,6 +30,28 @@ function parseShiftTime(timeStr) {
   return { hour, minute };
 }
 
+// Helper: Get attendance date for night shift users
+// Night shift users who clock in before 6 AM are considered part of previous day's shift
+function getAttendanceDateForNightShift(clockInTime, shiftTime) {
+  const isNightShift = shiftTime === 'night';
+  if (!isNightShift) {
+    // Day shift: use calendar date
+    return clockInTime.toISOString().split('T')[0];
+  }
+  
+  // Night shift: if clocking in before 6 AM, use previous day
+  const hour = clockInTime.getHours();
+  if (hour < 6) {
+    // Before 6 AM - belongs to previous day
+    const previousDay = new Date(clockInTime);
+    previousDay.setDate(previousDay.getDate() - 1);
+    return previousDay.toISOString().split('T')[0];
+  }
+  
+  // 6 AM or later - use current day
+  return clockInTime.toISOString().split('T')[0];
+}
+
 // Helper: Check if office location
 function isOfficeLocation(location) {
   if (!location) return false;
@@ -60,7 +82,8 @@ router.post('/clock-in', protect, async (req, res) => {
     const {
       staff_id,
       supervisor_id,
-      nc_location_id,
+      zone_id,
+      nc_location_id, // Backward compatibility
       overtime,
       double_duty,
       lat,
@@ -71,10 +94,17 @@ router.post('/clock-in', protect, async (req, res) => {
       attendance_date // Optional: for backdated attendance (YYYY-MM-DD)
     } = req.body;
 
-    if (!staff_id || !supervisor_id || !nc_location_id) {
+    if (!staff_id || !supervisor_id) {
       return res.status(400).json({
         success: false,
-        error: 'staff_id, supervisor_id, and nc_location_id are required'
+        error: 'staff_id and supervisor_id are required'
+      });
+    }
+
+    if (!zone_id && !nc_location_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'zone_id or nc_location_id is required'
       });
     }
 
@@ -84,10 +114,37 @@ router.post('/clock-in', protect, async (req, res) => {
     const isManager = currentUserRole === 'manager';
     const isManagerOrGM = isManager || isGeneralManager;
 
-    // Get supervisor, location, and staff
-    const [supervisor, location, staff] = await Promise.all([
+    // Get zone and location
+    const Zone = require('../models/Zone');
+    let zone = null;
+    let location = null;
+    let finalLocationId = null;
+
+    if (zone_id) {
+      zone = await Zone.findById(zone_id).populate('locationId');
+      if (!zone) {
+        return res.status(404).json({
+          success: false,
+          error: 'Zone not found'
+        });
+      }
+      location = zone.locationId;
+      finalLocationId = location?._id?.toString();
+    } else if (nc_location_id) {
+      // Backward compatibility
+      location = await Location.findById(nc_location_id);
+      if (!location) {
+        return res.status(404).json({
+          success: false,
+          error: 'Location not found'
+        });
+      }
+      finalLocationId = nc_location_id;
+    }
+
+    // Get supervisor and staff
+    const [supervisor, staff] = await Promise.all([
       User.findById(supervisor_id),
-      Location.findById(nc_location_id),
       staff_id !== supervisor_id ? User.findById(staff_id) : User.findById(supervisor_id)
     ]);
 
@@ -140,17 +197,26 @@ router.post('/clock-in', protect, async (req, res) => {
 
       // Check staff assignment (if not self-action)
       if (staff_id !== supervisor_id) {
-        const assignment = await StaffAssignment.findOne({
+        const assignmentQuery = {
           staffId: staff_id,
           supervisorId: supervisor_id,
-          ncLocationId: nc_location_id,
           isActive: true
-        });
+        };
+        
+        if (zone_id) {
+          assignmentQuery.zoneId = zone_id;
+        } else {
+          assignmentQuery.ncLocationId = nc_location_id;
+        }
+
+        const assignment = await StaffAssignment.findOne(assignmentQuery);
 
         if (!assignment) {
           return res.status(400).json({
             success: false,
-            error: 'Staff is not assigned to this supervisor at this location'
+            error: zone_id 
+              ? 'Staff is not assigned to this supervisor at this zone'
+              : 'Staff is not assigned to this supervisor at this location'
           });
         }
       }
@@ -204,11 +270,31 @@ router.post('/clock-in', protect, async (req, res) => {
       targetDate = requestedDate;
     }
     
-    const existingAttendance = await Attendance.findOne({
-      staffId: staff_id,
-      attendanceDate: todayStr,
-      clockOut: null
-    }).sort({ createdAt: -1 });
+    // For night shift users, determine the correct attendance date
+    const isNightShift = staff.shiftTime === 'night';
+    const now = attendance_date && isManager && !isSelfAction ? targetDate : new Date();
+    const calculatedAttendanceDate = getAttendanceDateForNightShift(now, staff.shiftTime);
+    
+    // Check for existing attendance - for night shift, check both today and yesterday
+    let existingAttendance = null;
+    if (isNightShift) {
+      // Night shift: check both calculated date and previous day (in case they're clocking in early morning)
+      const yesterdayStr = new Date(now);
+      yesterdayStr.setDate(yesterdayStr.getDate() - 1);
+      const yesterdayDateStr = yesterdayStr.toISOString().split('T')[0];
+      
+      existingAttendance = await Attendance.findOne({
+        staffId: staff_id,
+        attendanceDate: { $in: [calculatedAttendanceDate, yesterdayDateStr] },
+        clockOut: null
+      }).sort({ createdAt: -1 });
+    } else {
+      existingAttendance = await Attendance.findOne({
+        staffId: staff_id,
+        attendanceDate: calculatedAttendanceDate,
+        clockOut: null
+      }).sort({ createdAt: -1 });
+    }
 
     if (existingAttendance) {
       return res.json({
@@ -234,9 +320,8 @@ router.post('/clock-in', protect, async (req, res) => {
     // Get system config
     const systemConfig = await getSystemConfig();
     
-    // Calculate if late based on USER's shift time (not location's shift time)
-    // For backdated attendance, use the target date; otherwise use current time
-    const now = attendance_date && isManager && !isSelfAction ? targetDate : new Date();
+    // Use calculated attendance date (handles night shift properly)
+    const finalAttendanceDate = calculatedAttendanceDate;
     
     // Use staff member's personal shift configuration
     const staffShiftStartTime = staff.shiftStartTime || '09:00';
@@ -246,9 +331,10 @@ router.post('/clock-in', protect, async (req, res) => {
     const workStartMinutes = shiftTime.hour * 60 + shiftTime.minute;
     const isLate = clockInMinutes > (workStartMinutes + systemConfig.gracePeriodMinutes);
 
-    // Check if today is an off day (weekly or company holiday)
+    // Check if the attendance date is an off day (weekly or company holiday)
     const Holiday = require('../models/Holiday');
-    const dayOfWeek = now.getDay(); // 0=Sunday, 6=Saturday
+    const attendanceDateObj = new Date(finalAttendanceDate + 'T00:00:00');
+    const dayOfWeek = attendanceDateObj.getDay(); // 0=Sunday, 6=Saturday
     
     // Get staff's shift configuration
     const staffShiftDays = staff.shiftDays || 6; // Default to 6-day week
@@ -264,7 +350,7 @@ router.post('/clock-in', protect, async (req, res) => {
     }
     
     // Check company holidays
-    const companyHoliday = await Holiday.findOne({ date: todayStr });
+    const companyHoliday = await Holiday.findOne({ date: finalAttendanceDate });
     const isCompanyHoliday = !!companyHoliday;
     
     // Automatic overtime if working on any off day
@@ -279,8 +365,9 @@ router.post('/clock-in', protect, async (req, res) => {
     const attendance = await Attendance.create({
       staffId: staff_id,
       supervisorId: supervisor_id,
-      ncLocationId: nc_location_id,
-      attendanceDate: todayStr,
+      zoneId: zone_id || null,
+      ncLocationId: finalLocationId,
+      attendanceDate: finalAttendanceDate,
       clockIn: now,
       overtime: finalOvertime,
       doubleDuty: double_duty || false,
@@ -335,7 +422,8 @@ router.post('/clock-out', protect, async (req, res) => {
     const {
       staff_id,
       supervisor_id,
-      nc_location_id,
+      zone_id,
+      nc_location_id, // Backward compatibility
       lat,
       lng,
       clock_out_photo_url,
@@ -343,10 +431,17 @@ router.post('/clock-out', protect, async (req, res) => {
       attendance_date // Optional: for backdated attendance (YYYY-MM-DD)
     } = req.body;
 
-    if (!staff_id || !supervisor_id || !nc_location_id) {
+    if (!staff_id || !supervisor_id) {
       return res.status(400).json({
         success: false,
-        error: 'staff_id, supervisor_id, and nc_location_id are required'
+        error: 'staff_id and supervisor_id are required'
+      });
+    }
+
+    if (!zone_id && !nc_location_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'zone_id or nc_location_id is required'
       });
     }
 
@@ -356,9 +451,36 @@ router.post('/clock-out', protect, async (req, res) => {
     const isManager = currentUserRole === 'manager';
     const isManagerOrGM = isManager || isGeneralManager;
 
-    const [supervisor, location, staff] = await Promise.all([
+    // Get zone and location
+    const Zone = require('../models/Zone');
+    let zone = null;
+    let location = null;
+    let finalLocationId = null;
+
+    if (zone_id) {
+      zone = await Zone.findById(zone_id).populate('locationId');
+      if (!zone) {
+        return res.status(404).json({
+          success: false,
+          error: 'Zone not found'
+        });
+      }
+      location = zone.locationId;
+      finalLocationId = location?._id?.toString();
+    } else if (nc_location_id) {
+      // Backward compatibility
+      location = await Location.findById(nc_location_id);
+      if (!location) {
+        return res.status(404).json({
+          success: false,
+          error: 'Location not found'
+        });
+      }
+      finalLocationId = nc_location_id;
+    }
+
+    const [supervisor, staff] = await Promise.all([
       User.findById(supervisor_id),
-      Location.findById(nc_location_id),
       User.findById(staff_id)
     ]);
 
@@ -385,7 +507,7 @@ router.post('/clock-out', protect, async (req, res) => {
     if (!overrideMode) {
       const supLoc = await SupervisorLocation.findOne({
         supervisorId: supervisor_id,
-        ncLocationId: nc_location_id
+        ncLocationId: finalLocationId
       });
 
       if (!supLoc) {
@@ -396,8 +518,11 @@ router.post('/clock-out', protect, async (req, res) => {
       }
     }
 
-    // Find today's attendance (or backdated attendance for managers)
-    let todayStr = new Date().toISOString().split('T')[0];
+    // Find attendance record - for night shift, check both today and yesterday
+    const now = new Date();
+    const isNightShift = staff.shiftTime === 'night';
+    
+    let todayStr = now.toISOString().split('T')[0];
     
     if (attendance_date && isManager && !isSelfAction) {
       // Validate date format
@@ -411,12 +536,42 @@ router.post('/clock-out', protect, async (req, res) => {
       todayStr = attendance_date;
     }
     
-    const attendance = await Attendance.findOne({
+    // For night shift users clocking out in the morning, check previous day's attendance
+    let attendanceDateToCheck = todayStr;
+    if (isNightShift && !attendance_date) {
+      const hour = now.getHours();
+      // If clocking out before 6 AM, it's part of previous day's shift
+      if (hour < 6) {
+        const yesterday = new Date(now);
+        yesterday.setDate(yesterday.getDate() - 1);
+        attendanceDateToCheck = yesterday.toISOString().split('T')[0];
+      }
+    }
+    
+    // Build attendance query - for night shift, check both dates
+    let attendanceQuery = {
       staffId: staff_id,
       supervisorId: supervisor_id,
-      ncLocationId: nc_location_id,
-      attendanceDate: todayStr
-    });
+      clockOut: null // Must be open attendance
+    };
+    
+    if (isNightShift && !attendance_date) {
+      // Night shift: check both today and yesterday
+      const yesterday = new Date(now);
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yesterdayStr = yesterday.toISOString().split('T')[0];
+      attendanceQuery.attendanceDate = { $in: [todayStr, yesterdayStr] };
+    } else {
+      attendanceQuery.attendanceDate = attendanceDateToCheck;
+    }
+    
+    if (zone_id) {
+      attendanceQuery.zoneId = zone_id;
+    } else {
+      attendanceQuery.ncLocationId = finalLocationId;
+    }
+    
+    const attendance = await Attendance.findOne(attendanceQuery).sort({ createdAt: -1 });
 
     if (!attendance) {
       return res.status(404).json({
@@ -505,20 +660,51 @@ router.post('/clock-out', protect, async (req, res) => {
 });
 
 // @route   GET /api/attendance/today
-// @desc    Get today's attendance
+// @desc    Get today's attendance (includes yesterday for night shift users)
 // @access  Private
 router.get('/today', protect, async (req, res) => {
   try {
     const todayStr = new Date().toISOString().split('T')[0];
-    const attendances = await Attendance.find({ attendanceDate: todayStr })
-      .populate('staffId', 'fullName username email')
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toISOString().split('T')[0];
+    
+    // For night shift users, include both today and yesterday's attendance
+    // This ensures night shift guards who clocked in yesterday evening are still visible
+    const attendanceQuery = {
+      attendanceDate: { $in: [todayStr, yesterdayStr] }
+    };
+    
+    const attendances = await Attendance.find(attendanceQuery)
+      .populate('staffId', 'fullName username email shiftTime')
       .populate('supervisorId', 'fullName username')
       .populate('ncLocationId', 'name code')
       .populate('clockedInBy', 'fullName username')
       .populate('clockedOutBy', 'fullName username')
       .sort({ createdAt: -1 });
+    
+    // Filter: For day shift users, only show today's attendance
+    // For night shift users, show both today and yesterday (if still clocked in)
+    const now = new Date();
+    const hour = now.getHours();
+    const filteredAttendances = attendances.filter(att => {
+      const isNightShift = att.staffId?.shiftTime === 'night';
+      
+      if (isNightShift) {
+        // Night shift: show if from yesterday (still active) or from today
+        if (att.attendanceDate === yesterdayStr) {
+          // Yesterday's attendance: only show if still clocked in (no clock out)
+          return !att.clockOut;
+        }
+        // Today's attendance: always show
+        return true;
+      } else {
+        // Day shift: only show today's attendance
+        return att.attendanceDate === todayStr;
+      }
+    });
 
-    const formatted = attendances.map(att => ({
+    const formatted = filteredAttendances.map(att => ({
       id: att._id,
       staffId: att.staffId?._id?.toString(),
       staffName: att.staffId?.fullName || att.staffId?.username || 'Unknown Staff',

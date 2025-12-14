@@ -11,6 +11,7 @@ import { Textarea } from '../components/ui/Textarea';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/Dialog';
 // Removed lucide-react and sonner
 import { fetchLocations, createLocation, updateLocation, deleteLocation, NCLocation } from '../lib/locations.js';
+import { fetchZones, createZone, updateZone, deleteZone } from '../lib/zones.js';
 
 const DEFAULT_REGION = {
   latitude: 34.7595,
@@ -41,6 +42,24 @@ export default function Locations() {
   const [selectedCoordinate, setSelectedCoordinate] = useState(null);
   const parsedRadius = parseInt(formData.radius_meters, 10);
   const mapRadius = Number.isFinite(parsedRadius) ? Math.max(parsedRadius, 25) : 0;
+  
+  // Zone management state
+  const [zones, setZones] = useState({}); // { locationId: [zones] }
+  const [zonesModalOpen, setZonesModalOpen] = useState(false);
+  const [selectedLocationForZones, setSelectedLocationForZones] = useState(null);
+  const [zoneFormData, setZoneFormData] = useState({
+    name: '',
+    description: '',
+    center_lat: '40.7128',
+    center_lng: '-74.0060',
+    radius_meters: '100',
+  });
+  const [editingZoneId, setEditingZoneId] = useState(null);
+  const zoneMapRef = useRef(null);
+  const [zoneInitialRegion, setZoneInitialRegion] = useState(DEFAULT_REGION);
+  const [zoneSelectedCoordinate, setZoneSelectedCoordinate] = useState(null);
+  const zoneParsedRadius = parseInt(zoneFormData.radius_meters, 10);
+  const zoneMapRadius = Number.isFinite(zoneParsedRadius) ? Math.max(zoneParsedRadius, 25) : 0;
 
   const resetForm = () => {
     setFormData({
@@ -157,8 +176,31 @@ useEffect(() => {
     try {
       const data = await fetchLocations();
       setLocations(data);
+      // Load zones for all locations
+      const zonesData = {};
+      for (const location of data) {
+        try {
+          const locationZones = await fetchZones(location.id);
+          zonesData[location.id] = locationZones;
+        } catch (error) {
+          console.error(`Error loading zones for location ${location.id}:`, error);
+          zonesData[location.id] = [];
+        }
+      }
+      setZones(zonesData);
     } catch (error) {
       console.error('Error loading locations:', error);
+    }
+  };
+  
+  const loadZonesForLocation = async (locationId) => {
+    try {
+      const locationZones = await fetchZones(locationId);
+      setZones(prev => ({ ...prev, [locationId]: locationZones }));
+      return locationZones;
+    } catch (error) {
+      console.error('Error loading zones:', error);
+      throw error;
     }
   };
 
@@ -260,6 +302,249 @@ useEffect(() => {
     const coordinate = event.nativeEvent.coordinate;
     setSelectedCoordinate(coordinate);
     applyCoordinateToForm(coordinate);
+  };
+
+  // Zone management functions
+  const fetchCurrentLocationForZone = async () => {
+    try {
+      // Request location permissions
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Location permission is required to automatically fetch your current location');
+        return null;
+      }
+
+      // Get current position
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+      
+      const { latitude, longitude } = position.coords;
+      
+      // Update form data
+      setZoneFormData((prev) => ({
+        ...prev,
+        center_lat: latitude.toFixed(6),
+        center_lng: longitude.toFixed(6),
+      }));
+
+      // Update map region
+      const region = {
+        latitude,
+        longitude,
+        latitudeDelta: 0.02,
+        longitudeDelta: 0.02,
+      };
+      setZoneInitialRegion(region);
+      setZoneSelectedCoordinate({ latitude, longitude });
+
+      // Animate map to current location
+      requestAnimationFrame(() => {
+        zoneMapRef.current?.animateToRegion(region, 500);
+      });
+
+      return { latitude, longitude };
+    } catch (error) {
+      console.error('Error fetching current location:', error);
+      Alert.alert('Error', 'Failed to fetch current location. Please enter coordinates manually.');
+      return null;
+    }
+  };
+
+  const resetZoneForm = async (shouldFetchLocation = true) => {
+    setZoneFormData({
+      name: '',
+      description: '',
+      center_lat: '40.7128', // Temporary default, will be updated by fetchCurrentLocationForZone
+      center_lng: '-74.0060', // Temporary default, will be updated by fetchCurrentLocationForZone
+      radius_meters: '100',
+    });
+    setEditingZoneId(null);
+    
+    // Fetch current location automatically
+    if (shouldFetchLocation) {
+      const location = await fetchCurrentLocationForZone();
+      // If location fetch failed, fallback to location's center or default
+      if (!location && selectedLocationForZones) {
+        const region = {
+          latitude: selectedLocationForZones.center_lat || 40.7128,
+          longitude: selectedLocationForZones.center_lng || -74.0060,
+          latitudeDelta: 0.02,
+          longitudeDelta: 0.02,
+        };
+        setZoneFormData((prev) => ({
+          ...prev,
+          center_lat: region.latitude.toString(),
+          center_lng: region.longitude.toString(),
+        }));
+        setZoneInitialRegion(region);
+        setZoneSelectedCoordinate({ latitude: region.latitude, longitude: region.longitude });
+      }
+    } else if (selectedLocationForZones) {
+      // Fallback to location's center if not fetching current location
+      const region = {
+        latitude: selectedLocationForZones.center_lat || 40.7128,
+        longitude: selectedLocationForZones.center_lng || -74.0060,
+        latitudeDelta: 0.02,
+        longitudeDelta: 0.02,
+      };
+      setZoneFormData((prev) => ({
+        ...prev,
+        center_lat: region.latitude.toString(),
+        center_lng: region.longitude.toString(),
+      }));
+      setZoneInitialRegion(region);
+      setZoneSelectedCoordinate({ latitude: region.latitude, longitude: region.longitude });
+    }
+  };
+
+  const handleOpenZonesModal = async (location) => {
+    setSelectedLocationForZones(location);
+    setZonesModalOpen(true);
+    // Fetch current location when opening modal
+    await resetZoneForm(true);
+  };
+
+  const handleCloseZonesModal = () => {
+    setZonesModalOpen(false);
+    setSelectedLocationForZones(null);
+    resetZoneForm();
+  };
+
+  const handleZoneSubmit = async () => {
+    if (!selectedLocationForZones) return;
+    
+    // Validate required fields
+    if (!zoneFormData.name || !zoneFormData.center_lat || !zoneFormData.center_lng || !zoneFormData.radius_meters) {
+      Alert.alert('Error', 'Please fill in all required fields (Name, Latitude, Longitude, Radius)');
+      return;
+    }
+    
+    try {
+      const zoneData = {
+        name: zoneFormData.name.trim(),
+        location_id: selectedLocationForZones.id,
+        description: (zoneFormData.description || '').trim(),
+        center_lat: parseFloat(zoneFormData.center_lat),
+        center_lng: parseFloat(zoneFormData.center_lng),
+        radius_meters: parseInt(zoneFormData.radius_meters, 10),
+      };
+
+      // Validate parsed values
+      if (isNaN(zoneData.center_lat) || isNaN(zoneData.center_lng) || isNaN(zoneData.radius_meters)) {
+        Alert.alert('Error', 'Invalid coordinates or radius. Please enter valid numbers.');
+        return;
+      }
+
+      if (zoneData.radius_meters <= 0) {
+        Alert.alert('Error', 'Radius must be greater than 0');
+        return;
+      }
+
+      console.log('Creating zone with data:', zoneData);
+
+      if (editingZoneId) {
+        await updateZone(editingZoneId, zoneData);
+        Alert.alert('Success', 'Zone updated successfully!');
+      } else {
+        const result = await createZone(zoneData);
+        console.log('Zone creation result:', result);
+        Alert.alert('Success', 'Zone added successfully!');
+      }
+
+      // Reload zones for this location
+      await loadZonesForLocation(selectedLocationForZones.id);
+      resetZoneForm();
+    } catch (error) {
+      console.error('Error saving zone:', error);
+      console.error('Error details:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status
+      });
+      const errorMessage = error.response?.data?.error || error.message || 'Failed to save zone';
+      Alert.alert('Error', errorMessage);
+    }
+  };
+
+  const handleZoneEdit = (zone) => {
+    setZoneFormData({
+      name: zone.name || '',
+      description: zone.description || '',
+      center_lat: zone.center_lat ? zone.center_lat.toString() : '40.7128',
+      center_lng: zone.center_lng ? zone.center_lng.toString() : '-74.0060',
+      radius_meters: zone.radius_meters ? zone.radius_meters.toString() : '100',
+    });
+    setEditingZoneId(zone.id);
+    
+    // Use zone's existing coordinates for the map
+    const region = {
+      latitude: zone.center_lat || 40.7128,
+      longitude: zone.center_lng || -74.0060,
+      latitudeDelta: 0.02,
+      longitudeDelta: 0.02,
+    };
+    setZoneInitialRegion(region);
+    setZoneSelectedCoordinate({ latitude: region.latitude, longitude: region.longitude });
+    
+    // Animate map to zone's location
+    requestAnimationFrame(() => {
+      zoneMapRef.current?.animateToRegion(region, 500);
+    });
+  };
+
+  const handleZoneDelete = async (zoneId) => {
+    Alert.alert(
+      'Delete Zone',
+      'Are you sure you want to delete this zone?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteZone(zoneId);
+              if (selectedLocationForZones) {
+                await loadZonesForLocation(selectedLocationForZones.id);
+              }
+              Alert.alert('Success', 'Zone deleted successfully');
+            } catch (error) {
+              console.error('Error deleting zone:', error);
+              Alert.alert('Error', error.message || 'Failed to delete zone');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const applyZoneCoordinateToForm = (coordinate) => {
+    setZoneFormData((prev) => ({
+      ...prev,
+      center_lat: coordinate.latitude.toFixed(6),
+      center_lng: coordinate.longitude.toFixed(6),
+    }));
+  };
+
+  const handleZoneMapPress = (event) => {
+    const coordinate = event.nativeEvent.coordinate;
+    setZoneSelectedCoordinate(coordinate);
+    applyZoneCoordinateToForm(coordinate);
+    zoneMapRef.current?.animateToRegion(
+      {
+        ...coordinate,
+        latitudeDelta: 0.02,
+        longitudeDelta: 0.02,
+      },
+      200,
+    );
+  };
+
+  const handleZoneMarkerDragEnd = (event) => {
+    const coordinate = event.nativeEvent.coordinate;
+    setZoneSelectedCoordinate(coordinate);
+    applyZoneCoordinateToForm(coordinate);
   };
 
   return (
@@ -439,7 +724,217 @@ useEffect(() => {
             </ScrollView>
           </DialogContent>
         </Dialog>
-      {/* Removed the extra View tag here */}
+
+      {/* Zone Management Modal */}
+      <Dialog open={zonesModalOpen} onOpenChange={(open) => {
+          if (!open) {
+            handleCloseZonesModal();
+          }
+        }}>
+        <DialogContent style={styles.dialogContent}>
+          <ScrollView
+            style={styles.formScroll}
+            contentContainerStyle={styles.formScrollContent}
+            showsVerticalScrollIndicator
+            bounces
+          >
+            <View style={styles.form}>
+              <Text style={styles.modalTitle}>
+                Manage Zones - {selectedLocationForZones?.name || ''}
+              </Text>
+              
+              {/* Zones List */}
+              <View style={styles.zonesListSection}>
+                <Text style={styles.sectionTitle}>Zones ({zones[selectedLocationForZones?.id]?.length || 0})</Text>
+                {selectedLocationForZones && zones[selectedLocationForZones.id]?.length === 0 ? (
+                  <Text style={styles.emptyZonesText}>No zones created yet. Add your first zone below.</Text>
+                ) : (
+                  selectedLocationForZones && zones[selectedLocationForZones.id]?.map((zone) => (
+                    <Card key={zone.id} style={styles.zoneCard}>
+                      <CardContent style={styles.zoneCardContent}>
+                        <View style={styles.zoneInfo}>
+                          <Text style={styles.zoneName}>{zone.name}</Text>
+                          {zone.description && (
+                            <Text style={styles.zoneDescription}>{zone.description}</Text>
+                          )}
+                          <View style={styles.zoneDetails}>
+                            <Text style={styles.zoneDetailText}>
+                              {zone.center_lat.toFixed(4)}, {zone.center_lng.toFixed(4)}
+                            </Text>
+                            <Text style={styles.zoneDetailText}>Radius: {zone.radius_meters}m</Text>
+                          </View>
+                        </View>
+                        <View style={styles.zoneActions}>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onPress={() => handleZoneEdit(zone)}
+                          >
+                            <Text style={styles.editButtonText}>Edit</Text>
+                          </Button>
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onPress={() => handleZoneDelete(zone.id)}
+                          >
+                            <Text style={styles.deleteButtonText}>Delete</Text>
+                          </Button>
+                        </View>
+                      </CardContent>
+                    </Card>
+                  ))
+                )}
+              </View>
+
+              {/* Add/Edit Zone Form */}
+              <View style={styles.zoneFormSection}>
+                <Text style={styles.sectionTitle}>
+                  {editingZoneId ? 'Edit Zone' : 'Add New Zone'}
+                </Text>
+                
+                <View style={styles.formField}>
+                  <Label style={styles.label}>Zone Name *</Label>
+                  <Input
+                    style={styles.input}
+                    value={zoneFormData.name}
+                    onChangeText={(text) => setZoneFormData({ ...zoneFormData, name: text })}
+                    placeholder="Zone A, North Area, etc."
+                  />
+                </View>
+
+                <View style={styles.formField}>
+                  <Label style={styles.label}>Description</Label>
+                  <Input
+                    style={styles.input}
+                    value={zoneFormData.description}
+                    onChangeText={(text) => setZoneFormData({ ...zoneFormData, description: text })}
+                    placeholder="Optional description"
+                  />
+                </View>
+
+                <View style={styles.formRow}>
+                  <View style={styles.formField}>
+                    <Label style={styles.label}>Latitude *</Label>
+                    <Input
+                      style={styles.input}
+                      value={zoneFormData.center_lat}
+                      onChangeText={(text) => setZoneFormData({ ...zoneFormData, center_lat: text })}
+                      placeholder="40.7128"
+                      keyboardType="numeric"
+                    />
+                  </View>
+                  <View style={styles.formField}>
+                    <Label style={styles.label}>Longitude *</Label>
+                    <Input
+                      style={styles.input}
+                      value={zoneFormData.center_lng}
+                      onChangeText={(text) => setZoneFormData({ ...zoneFormData, center_lng: text })}
+                      placeholder="-74.0060"
+                      keyboardType="numeric"
+                    />
+                  </View>
+                  <View style={[styles.formField, styles.formFieldLast]}>
+                    <Label style={styles.label}>Radius (m) *</Label>
+                    <Input
+                      style={styles.input}
+                      value={zoneFormData.radius_meters}
+                      onChangeText={(text) => setZoneFormData({ ...zoneFormData, radius_meters: text })}
+                      placeholder="100"
+                      keyboardType="numeric"
+                    />
+                  </View>
+                </View>
+
+                <View style={styles.formField}>
+                  <Button
+                    variant="outline"
+                    onPress={fetchCurrentLocationForZone}
+                    style={styles.currentLocationButton}
+                  >
+                    <Text style={styles.currentLocationButtonText}>📍 Use Current Location</Text>
+                  </Button>
+                </View>
+
+                <View style={styles.mapPickerSection}>
+                  <Text style={styles.mapSectionTitle}>Pick zone location on map</Text>
+                  <Text style={styles.mapSectionSubtitle}>
+                    Tap anywhere to drop a marker or drag the existing pin. The latitude and longitude
+                    fields update automatically whenever you move the pin.
+                  </Text>
+                  <View style={styles.mapWrapper}>
+                    <MapView
+                      key={`zone-map-${editingZoneId ?? 'new'}-${selectedLocationForZones?.id}`}
+                      ref={zoneMapRef}
+                      style={styles.map}
+                      initialRegion={zoneInitialRegion}
+                      onPress={handleZoneMapPress}
+                      showsUserLocation
+                    >
+                      {zoneSelectedCoordinate && (
+                        <>
+                          <Marker
+                            coordinate={zoneSelectedCoordinate}
+                            draggable
+                            onDragEnd={handleZoneMarkerDragEnd}
+                          />
+                          {zoneMapRadius > 0 && (
+                            <Circle
+                              center={zoneSelectedCoordinate}
+                              radius={zoneMapRadius}
+                              strokeColor="rgba(34, 197, 94, 0.6)"
+                              fillColor="rgba(34, 197, 94, 0.15)"
+                            />
+                          )}
+                        </>
+                      )}
+                    </MapView>
+                  </View>
+                  <View style={styles.mapActions}>
+                    <Text style={styles.mapSelectionText}>
+                      {zoneSelectedCoordinate
+                        ? `${zoneSelectedCoordinate.latitude.toFixed(5)}, ${zoneSelectedCoordinate.longitude.toFixed(5)}`
+                        : 'Tap the map to place a marker.'}
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.zoneFormActions}>
+                  <TouchableOpacity 
+                    style={[styles.zoneCloseButton, styles.zoneActionButton, styles.zoneCloseButtonContainer]}
+                    onPress={handleCloseZonesModal}
+                  >
+                    <Text style={styles.zoneCloseButtonText}>Close</Text>
+                  </TouchableOpacity>
+                  
+                  <View style={styles.zoneFormActionsRight}>
+                    {editingZoneId && (
+                      <TouchableOpacity 
+                        style={[styles.zoneCancelButton, styles.zoneActionButton]}
+                        onPress={resetZoneForm}
+                      >
+                        <Text style={styles.zoneCancelButtonText}>Cancel Edit</Text>
+                      </TouchableOpacity>
+                    )}
+                    <TouchableOpacity 
+                      style={[
+                        styles.zoneAddButton, 
+                        styles.zoneActionButton,
+                        (!zoneFormData.name || !zoneFormData.center_lat || !zoneFormData.center_lng || !zoneFormData.radius_meters) && styles.zoneButtonDisabled
+                      ]}
+                      onPress={handleZoneSubmit}
+                      disabled={!zoneFormData.name || !zoneFormData.center_lat || !zoneFormData.center_lng || !zoneFormData.radius_meters}
+                    >
+                      <Text style={styles.zoneAddButtonText}>
+                        {editingZoneId ? 'Update' : 'Add'} Zone
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            </View>
+          </ScrollView>
+        </DialogContent>
+      </Dialog>
 
       {locations.length === 0 ? (
         <Card style={styles.card}>
@@ -472,6 +967,12 @@ useEffect(() => {
                     <Text style={styles.detailLabel}>Radius:</Text>
                     <Text style={styles.detailValue}>{location.radius_meters}m</Text>
                   </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Zones:</Text>
+                    <Text style={styles.detailValue}>
+                      {zones[location.id]?.length || 0} {zones[location.id]?.length === 1 ? 'zone' : 'zones'}
+                    </Text>
+                  </View>
                   <View style={styles.shiftTimes}>
                     <View style={styles.shiftTimeRow}>
                       <Text style={styles.shiftTimeLabel}>Morning:</Text>
@@ -484,6 +985,14 @@ useEffect(() => {
                   </View>
                 </View>
                 <View style={styles.cardActions}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    style={styles.manageZonesButton}
+                    onPress={() => handleOpenZonesModal(location)}
+                  >
+                    <Text style={styles.manageZonesButtonText}>Manage Zones</Text>
+                  </Button>
                   <Button
                     variant="outline"
                     size="sm"
@@ -772,5 +1281,155 @@ const styles = StyleSheet.create({
   },
   boldText: {
     fontWeight: 'bold',
+  },
+  manageZonesButton: {
+    flex: 1,
+    marginRight: 8,
+  },
+  manageZonesButtonText: {
+    color: '#22c55e',
+    marginLeft: 4,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 16,
+  },
+  zonesListSection: {
+    marginBottom: 24,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 12,
+  },
+  emptyZonesText: {
+    fontSize: 14,
+    color: '#666',
+    fontStyle: 'italic',
+    textAlign: 'center',
+    padding: 16,
+  },
+  zoneCard: {
+    marginBottom: 12,
+    backgroundColor: '#f9fafb',
+  },
+  zoneCardContent: {
+    padding: 12,
+  },
+  zoneInfo: {
+    marginBottom: 12,
+  },
+  zoneName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 4,
+  },
+  zoneDescription: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 8,
+  },
+  zoneDetails: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 4,
+  },
+  zoneDetailText: {
+    fontSize: 12,
+    color: '#666',
+  },
+  zoneActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  zoneFormSection: {
+    marginTop: 24,
+    paddingTop: 24,
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+  },
+  zoneFormActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: 16,
+    marginTop: 8,
+    width: '100%',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  zoneFormActionsRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexShrink: 1,
+    flexWrap: 'wrap',
+  },
+  zoneActionButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    minWidth: 90,
+    maxWidth: 150,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 1,
+    flexGrow: 0,
+  },
+  zoneCloseButton: {
+    backgroundColor: '#f3f4f6',
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+  },
+  zoneCloseButtonContainer: {
+    flexShrink: 1,
+    flexGrow: 0,
+  },
+  zoneCloseButtonText: {
+    color: '#374151',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  zoneCancelButton: {
+    backgroundColor: '#f3f4f6',
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+  },
+  zoneCancelButtonText: {
+    color: '#374151',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  zoneAddButton: {
+    backgroundColor: '#22c55e',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  zoneAddButtonText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  zoneButtonDisabled: {
+    backgroundColor: '#d1d5db',
+    opacity: 0.6,
+  },
+  currentLocationButton: {
+    marginTop: 8,
+    marginBottom: 8,
+    backgroundColor: '#3b82f6',
+    borderColor: '#3b82f6',
+  },
+  currentLocationButtonText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
   },
 });

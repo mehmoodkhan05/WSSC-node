@@ -126,14 +126,20 @@ export async function hasActiveClockIn(staffId = null) {
     }
 
     const today = new Date().toISOString().split('T')[0];
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toISOString().split('T')[0];
+    
     const response = await apiClient.get('/attendance/today');
     
     if (response.data && Array.isArray(response.data)) {
-      const activeAttendance = response.data.find(record => 
-        (record.staffId === targetId || record.staff_id === targetId) &&
-        record.date === today &&
-        !record.clockOut
-      );
+      // Check for active attendance from today or yesterday (for night shift)
+      const activeAttendance = response.data.find(record => {
+        const matchesId = record.staffId === targetId || record.staff_id === targetId;
+        const isActive = !record.clockOut;
+        const isTodayOrYesterday = record.date === today || record.date === yesterdayStr;
+        return matchesId && isActive && isTodayOrYesterday;
+      });
       return !!activeAttendance;
     }
 

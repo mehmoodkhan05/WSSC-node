@@ -28,7 +28,8 @@ import SupervisorDashboard from '../components/dashboard/SupervisorDashboard';
 import StaffDashboard from '../components/dashboard/StaffDashboard';
 import SimpleDropdown from '../components/ui/SimpleDropdown';
 import LogoFillLoader from '../components/LogoFillLoader';
-import { ALL_DEPARTMENTS_OPTION, DEPARTMENTS, getDepartmentLabel } from '../lib/departments';
+import { ALL_DEPARTMENTS_OPTION, getDepartmentLabel } from '../lib/departments';
+import { useDepartments } from '../hooks/useDepartments';
 import { getDashboardStats, getStatsByRoleAndDepartment, fetchTodayLeaveRequests } from '../lib/dashboard';
 import { fetchStaff, fetchSupervisors, fetchProfiles } from '../lib/staff';
 import { fetchLocations } from '../lib/locations';
@@ -53,6 +54,7 @@ import { fetchTodayAttendance } from '../lib/attendance';
 
 const DashboardScreen = () => {
   const { profile } = useAuth(); // Assuming useAuth provides basic profile
+  const { departments: DEPARTMENTS, loading: departmentsLoading } = useDepartments(); // Fetch departments from API
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [stats, setStats] = useState({

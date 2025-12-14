@@ -178,11 +178,19 @@ router.get('/status/:staffId?', protect, async (req, res) => {
       ? tracking.locations[tracking.locations.length - 1]
       : null;
 
+    // Handle case where staffId might not be populated (user deleted)
+    if (!tracking.staffId) {
+      return res.json({
+        success: true,
+        data: { isActive: false }
+      });
+    }
+
     res.json({
       success: true,
       data: {
         id: tracking._id,
-        staffId: tracking.staffId._id.toString(),
+        staffId: tracking.staffId._id?.toString() || tracking.staffId.toString(),
         staffName: tracking.staffId.fullName || tracking.staffId.username || 'Unknown',
         date: tracking.date,
         isActive: tracking.isActive,
@@ -213,7 +221,7 @@ router.get('/active', protect, async (req, res) => {
       date: todayStr,
       isActive: true
     })
-      .populate('staffId', 'fullName username email')
+      .populate('staffId', 'fullName username email department departments')
       .sort({ lastUpdate: -1 });
 
     const formatted = trackings.map(track => {
@@ -225,6 +233,8 @@ router.get('/active', protect, async (req, res) => {
         id: track._id,
         staff_id: track.staffId?._id?.toString(),
         staff_name: track.staffId?.fullName || track.staffId?.username || 'Unknown',
+        department: track.staffId?.department || null,
+        departments: track.staffId?.departments || [],
         lat: lastLocation?.lat || null,
         lng: lastLocation?.lng || null,
         timestamp: lastLocation?.timestamp || track.lastUpdate,
@@ -274,11 +284,19 @@ router.get('/:staffId', protect, async (req, res) => {
       });
     }
 
+    // Handle case where staffId might not be populated (user deleted)
+    if (!tracking.staffId) {
+      return res.json({
+        success: true,
+        data: null
+      });
+    }
+
     res.json({
       success: true,
       data: {
         id: tracking._id,
-        staffId: tracking.staffId._id.toString(),
+        staffId: tracking.staffId._id?.toString() || tracking.staffId.toString(),
         staffName: tracking.staffId.fullName || tracking.staffId.username || 'Unknown',
         date: tracking.date,
         isActive: tracking.isActive,

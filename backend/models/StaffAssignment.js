@@ -11,10 +11,16 @@ const staffAssignmentSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
+  zoneId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Zone',
+    required: true
+  },
+  // Legacy field - kept for backward compatibility during migration
   ncLocationId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Location',
-    required: true
+    required: false
   },
   isActive: {
     type: Boolean,
@@ -27,6 +33,7 @@ const staffAssignmentSchema = new mongoose.Schema({
 // Index for efficient queries
 staffAssignmentSchema.index({ staffId: 1, isActive: 1 });
 staffAssignmentSchema.index({ supervisorId: 1, isActive: 1 });
+staffAssignmentSchema.index({ zoneId: 1, isActive: 1 });
 
 module.exports = mongoose.model('StaffAssignment', staffAssignmentSchema);
 

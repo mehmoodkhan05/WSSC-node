@@ -397,6 +397,8 @@ const normalizeLiveLocation = (location) => {
   return {
     user_id: userId,
     name: location.name || location.staffName || location.staff_name || 'Unknown Staff',
+    department: location.department || null,
+    departments: Array.isArray(location.departments) ? location.departments : [],
     latitude,
     longitude,
     timestamp,
@@ -418,58 +420,66 @@ const filterLocationsByRole = async (locations, mapResults) => {
   const role = normalizeRole(rawRole);
   const currentUserId = String(currentUser.id || currentUser.user_id || '');
 
-  const hasOrgWideVisibility = hasManagementPrivileges(role) || hasFullControl(role);
+  // Get current user's department info from stored user data
+  // Note: department info should be available from login/auth/me endpoint
+  const currentUserDepartment = currentUser.department || currentUser.department_id || null;
+  const currentUserDepartments = Array.isArray(currentUser.departments) 
+    ? currentUser.departments 
+    : (currentUser.department ? [currentUser.department] : []);
+  
+  // Determine role-based visibility
+  const isCEOOrAdmin = role === ROLE.CEO || role === ROLE.SUPER_ADMIN;
+  const isGeneralManager = role === ROLE.GENERAL_MANAGER;
+  const isManager = role === ROLE.MANAGER;
   const isSupervisorRole = role === ROLE.SUPERVISOR;
 
-  if (hasOrgWideVisibility) {
-    return locations.filter((location) => {
-      if (!location) {
-        return false;
+  // Helper function to normalize department values for comparison
+  const normalizeDept = (dept) => {
+    if (!dept) return null;
+    return String(dept).trim().toLowerCase();
+  };
+
+  // Helper function to check if location's department matches current user's department(s)
+  const matchesDepartment = (locationDept, locationDepts) => {
+    if (isCEOOrAdmin) {
+      return true; // CEO/Admin sees all
+    }
+
+    if (isGeneralManager) {
+      // GM: check against their departments array
+      if (currentUserDepartments.length === 0) {
+        return false; // GM with no departments assigned - see nothing
       }
-
-      const statusValue =
-        location.status ?? location.isActive ?? location.active ?? location.is_active;
-      const normalizedStatus =
-        typeof statusValue === 'string'
-          ? statusValue.toLowerCase()
-          : typeof statusValue === 'boolean'
-          ? statusValue
-          : statusValue == null
-          ? null
-          : String(statusValue).toLowerCase();
-
-      const isActive =
-        normalizedStatus === true ||
-        normalizedStatus === 'true' ||
-        normalizedStatus === 'active' ||
-        normalizedStatus === 1 ||
-        normalizedStatus === '1' ||
-        normalizedStatus === 'on';
-
-      if (normalizedStatus !== null && !isActive) {
-        return false;
-      }
-
-      const rawId = location?.user_id;
-      if (!rawId) {
+      const normalizedUserDepts = currentUserDepartments.map(normalizeDept).filter(Boolean);
+      const normalizedLocationDept = normalizeDept(locationDept);
+      const normalizedLocationDepts = Array.isArray(locationDepts) 
+        ? locationDepts.map(normalizeDept).filter(Boolean)
+        : [];
+      
+      // Check if location's department matches any of GM's departments
+      if (normalizedLocationDept && normalizedUserDepts.includes(normalizedLocationDept)) {
         return true;
       }
-
-      const normalizedId =
-        typeof rawId === 'string'
-          ? rawId
-          : typeof rawId === 'number'
-          ? String(rawId)
-          : rawId?.id || rawId?.objectId || null;
-
-      if (!normalizedId) {
-        return true;
+      if (normalizedLocationDepts.length > 0) {
+        return normalizedLocationDepts.some(dept => normalizedUserDepts.includes(dept));
       }
+      return false;
+    }
 
-      return normalizedId !== currentUserId;
-    });
-  }
+    if (isManager) {
+      // Manager: check against their single department
+      if (!currentUserDepartment) {
+        return false; // Manager with no department - see nothing
+      }
+      const normalizedUserDept = normalizeDept(currentUserDepartment);
+      const normalizedLocationDept = normalizeDept(locationDept);
+      return normalizedLocationDept === normalizedUserDept;
+    }
 
+    return false;
+  };
+
+  // Supervisor: only see self
   if (isSupervisorRole) {
     const normalizedCurrentId = String(currentUserId);
     const selfLocations = locations.filter((location) => {
@@ -522,7 +532,63 @@ const filterLocationsByRole = async (locations, mapResults) => {
     return [];
   }
 
-  return locations.filter((location) => String(location.user_id) === currentUserId);
+  // Filter locations based on role and department
+  return locations.filter((location) => {
+    if (!location) {
+      return false;
+    }
+
+    // Filter out inactive locations
+    const statusValue =
+      location.status ?? location.isActive ?? location.active ?? location.is_active;
+    const normalizedStatus =
+      typeof statusValue === 'string'
+        ? statusValue.toLowerCase()
+        : typeof statusValue === 'boolean'
+        ? statusValue
+        : statusValue == null
+        ? null
+        : String(statusValue).toLowerCase();
+
+    const isActive =
+      normalizedStatus === true ||
+      normalizedStatus === 'true' ||
+      normalizedStatus === 'active' ||
+      normalizedStatus === 1 ||
+      normalizedStatus === '1' ||
+      normalizedStatus === 'on';
+
+    if (normalizedStatus !== null && !isActive) {
+      return false;
+    }
+
+    // Don't show self
+    const rawId = location?.user_id;
+    if (rawId) {
+      const normalizedId =
+        typeof rawId === 'string'
+          ? rawId
+          : typeof rawId === 'number'
+          ? String(rawId)
+          : rawId?.id || rawId?.objectId || null;
+      if (normalizedId && String(normalizedId) === currentUserId) {
+        return false;
+      }
+    }
+
+    // CEO/Admin: see all (already filtered out self above)
+    if (isCEOOrAdmin) {
+      return true;
+    }
+
+    // Manager/GM: filter by department
+    if (isManager || isGeneralManager) {
+      return matchesDepartment(location.department, location.departments);
+    }
+
+    // Default: only self (shouldn't reach here for roles above supervisor)
+    return false;
+  });
 };
 
 export async function fetchLiveLocations() {
@@ -538,6 +604,8 @@ export async function fetchLiveLocations() {
       const cloudResults = response.data.map(loc => ({
         user_id: loc.staff_id,
         name: loc.staff_name,
+        department: loc.department || null,
+        departments: loc.departments || [],
         latitude: loc.lat,
         longitude: loc.lng,
         timestamp: loc.timestamp,

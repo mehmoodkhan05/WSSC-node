@@ -10,10 +10,12 @@ import { fetchLeadershipAttendance } from '../../lib/attendance';
 import StatsCard from '../StatsCard';
 import AttendanceTable from '../AttendanceTable';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../ui/Card';
-import { DEPARTMENTS, getDepartmentLabel } from '../../lib/departments';
+import { getDepartmentLabel } from '../../lib/departments';
+import { useDepartments } from '../../hooks/useDepartments';
 
 const AdminDashboard = ({ stats, records, roleDepartmentStats = {} }) => {
   const { profile } = useAuth();
+  const { departments: DEPARTMENTS } = useDepartments(); // Fetch departments from API
   const [leadershipAttendance, setLeadershipAttendance] = useState([]);
   const [loadingLeadership, setLoadingLeadership] = useState(false);
 

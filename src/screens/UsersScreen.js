@@ -27,13 +27,14 @@ import {
   hasFullControl,
   getRoleLabel,
 } from '../lib/roles';
-import { DEPARTMENTS } from '../lib/departments';
+import { useDepartments } from '../hooks/useDepartments';
 import { JOBS } from '../lib/jobs';
 import { GRADES } from '../lib/grades';
 import SimpleDropdown from '../components/ui/SimpleDropdown';
 
 const UsersScreen = () => {
   const { profile } = useAuth();
+  const { departments: DEPARTMENTS } = useDepartments(); // Fetch departments from API
   const [profiles, setProfiles] = useState([]);
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState('');

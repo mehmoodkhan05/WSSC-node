@@ -18,6 +18,8 @@ import * as Sharing from 'expo-sharing';
 import { useAuth } from '../contexts/AuthContext';
 import { fetchAttendanceReport } from '../lib/attendance';
 import { fetchProfiles } from '../lib/staff';
+import { useDepartments } from '../hooks/useDepartments';
+import { getDepartmentLabel } from '../lib/departments';
 import { ROLE, hasFullControl, normalizeRole } from '../lib/roles';
 import SimpleDropdown from '../components/ui/SimpleDropdown';
 import SearchableDropdown from '../components/ui/SearchableDropdown';
@@ -27,21 +29,8 @@ const MONTHS = [
   'July', 'August', 'September', 'October', 'November', 'December'
 ];
 
-const DEPT_CODE_NAME_MAP = {
-  '11': 'Administration',
-  '12': 'Water Supply',
-  '13': 'Sanitation',
-  '14': 'Commercials',
-};
-
-const normalizeDeptCode = (value) => {
-  if (!value) return null;
-  const str = String(value).trim();
-  const digits = str.replace(/\D+/g, '');
-  return digits.length ? digits : str;
-};
-
-const formatDepartmentLabel = (dept) => {
+// Helper function to format department label (uses API departments if available)
+const formatDepartmentLabel = (dept, departmentsList = null) => {
   if (!dept) return 'Unknown Department';
   if (typeof dept === 'object') {
     const named =
@@ -49,36 +38,13 @@ const formatDepartmentLabel = (dept) => {
     if (named) return named;
     dept = dept.value || dept.code || dept.id || dept._id;
   }
-  const str = normalizeDeptCode(dept);
-  if (!str) return 'Unknown Department';
-  if (DEPT_CODE_NAME_MAP[str]) return DEPT_CODE_NAME_MAP[str];
-  if (/^\d+$/.test(str)) return `Department ${str}`;
-  return str
-    .split(/[_\s-]+/)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ');
-};
-
-const makeDepartmentOption = (code, name) => {
-  const codeStr = code ? String(code).trim() : '';
-  const nameStr = name ? String(name).trim() : '';
-  const normalizedCode = normalizeDeptCode(codeStr);
-  const normalizedValue = normalizeDeptCode(codeStr || nameStr);
-  const value = normalizedValue || codeStr || nameStr;
-  if (!value) return null;
-  const mappedName = normalizedCode ? DEPT_CODE_NAME_MAP[normalizedCode] : null;
-  const sameCodeAndName = nameStr && codeStr && nameStr.trim().toLowerCase() === codeStr.trim().toLowerCase();
-  let label = nameStr || mappedName || codeStr;
-  if (nameStr && codeStr && nameStr.toLowerCase() !== codeStr.toLowerCase()) {
-    label = `${nameStr} (${mappedName || codeStr})`;
-  } else if ((sameCodeAndName || !nameStr) && mappedName) {
-    label = mappedName;
-  }
-  return { label: label || formatDepartmentLabel(value), value };
+  // Use getDepartmentLabel from departments.js which uses API data
+  return getDepartmentLabel(dept, departmentsList);
 };
 
 const DetailedTimeReportScreen = () => {
   const { profile } = useAuth();
+  const { departments } = useDepartments(); // Fetch departments from API
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
   const [selectedStaff, setSelectedStaff] = useState('');
@@ -87,8 +53,13 @@ const DetailedTimeReportScreen = () => {
   const [loading, setLoading] = useState(false);
   const [exportingAll, setExportingAll] = useState(false);
   const [reportData, setReportData] = useState(null);
-  const [departmentOptions, setDepartmentOptions] = useState([{ label: 'All Departments', value: 'all' }]);
   const [selectedDepartment, setSelectedDepartment] = useState('all');
+  
+  // Build department options from API departments
+  const departmentOptions = [
+    { label: 'All Departments', value: 'all' },
+    ...departments.map(dept => ({ label: dept.label, value: dept.id }))
+  ];
 
   useEffect(() => {
     loadStaff();
@@ -134,23 +105,12 @@ const DetailedTimeReportScreen = () => {
   const loadStaff = async () => {
     try {
       const profiles = await fetchProfiles();
-      const deptMap = new Map();
-      (profiles || []).forEach((p) => {
-        const option = makeDepartmentOption(p.empDeptt || p.emp_deptt, p.department);
-        if (option) {
-          deptMap.set(option.value, option);
-        }
-      });
-
       setAllStaff(profiles || []);
       if (isGeneralManager && userDepartments.length > 0) {
         setSelectedDepartment(userDepartments[0]);
       }
       setStaffList(filterStaffByDepartment(profiles || []));
-      setDepartmentOptions([
-        { label: 'All Departments', value: 'all' },
-        ...Array.from(deptMap.values()).sort((a, b) => a.label.localeCompare(b.label)),
-      ]);
+      // Department options are now built from API departments via useDepartments hook
     } catch (error) {
       console.error('Error loading staff:', error);
       Alert.alert('Error', 'Failed to load staff list');

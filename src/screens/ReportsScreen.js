@@ -21,6 +21,8 @@ import {
   hasFullControl,
 } from '../lib/roles';
 import { fetchProfiles } from '../lib/staff';
+import { useDepartments } from '../hooks/useDepartments';
+import { getDepartmentLabel } from '../lib/departments';
 import SimpleDropdown from '../components/ui/SimpleDropdown';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
@@ -89,21 +91,8 @@ const MONTHS = [
   'July', 'August', 'September', 'October', 'November', 'December'
 ];
 
-const DEPT_CODE_NAME_MAP = {
-  '11': 'Administration',
-  '12': 'Water Supply',
-  '13': 'Sanitation',
-  '14': 'Commercials',
-};
-
-const normalizeDeptCode = (value) => {
-  if (!value) return null;
-  const str = String(value).trim();
-  const digits = str.replace(/\D+/g, '');
-  return digits.length ? digits : str;
-};
-
-const formatDepartmentLabel = (dept) => {
+// Helper function to format department label (uses API departments if available)
+const formatDepartmentLabel = (dept, departmentsList = null) => {
   if (!dept) return 'Unknown Department';
   if (typeof dept === 'object') {
     const named =
@@ -111,36 +100,13 @@ const formatDepartmentLabel = (dept) => {
     if (named) return named;
     dept = dept.value || dept.code || dept.id || dept._id;
   }
-  const str = normalizeDeptCode(dept);
-  if (!str) return 'Unknown Department';
-  if (DEPT_CODE_NAME_MAP[str]) return DEPT_CODE_NAME_MAP[str];
-  if (/^\d+$/.test(str)) return `Department ${str}`;
-  return str
-    .split(/[_\s-]+/)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ');
-};
-
-const makeDepartmentOption = (code, name) => {
-  const codeStr = code ? String(code).trim() : '';
-  const nameStr = name ? String(name).trim() : '';
-  const normalizedCode = normalizeDeptCode(codeStr);
-  const normalizedValue = normalizeDeptCode(codeStr || nameStr);
-  const value = normalizedValue || codeStr || nameStr;
-  if (!value) return null;
-  const mappedName = normalizedCode ? DEPT_CODE_NAME_MAP[normalizedCode] : null;
-  const sameCodeAndName = nameStr && codeStr && nameStr.trim().toLowerCase() === codeStr.trim().toLowerCase();
-  let label = nameStr || mappedName || codeStr;
-  if (nameStr && codeStr && nameStr.toLowerCase() !== codeStr.toLowerCase()) {
-    label = `${nameStr} (${mappedName || codeStr})`;
-  } else if ((sameCodeAndName || !nameStr) && mappedName) {
-    label = mappedName;
-  }
-  return { label: label || formatDepartmentLabel(value), value };
+  // Use getDepartmentLabel from departments.js which uses API data
+  return getDepartmentLabel(dept, departmentsList);
 };
 
 const ReportsScreen = () => {
   const { profile } = useAuth();
+  const { departments, loading: departmentsLoading } = useDepartments(); // Fetch departments from API
   const currentDate = new Date();
   const [selectedMonth, setSelectedMonth] = useState(currentDate.getMonth());
   const [selectedYear, setSelectedYear] = useState(currentDate.getFullYear());
@@ -153,8 +119,12 @@ const ReportsScreen = () => {
   const [acceptedBy, setAcceptedBy] = useState('');
   const [rawAttendanceData, setRawAttendanceData] = useState([]);
   const [selectedDepartment, setSelectedDepartment] = useState('all');
-  const [departmentOptions, setDepartmentOptions] = useState([{ label: 'All Departments', value: 'all' }]);
-  const [departmentsLoading, setDepartmentsLoading] = useState(false);
+  
+  // Build department options from API departments
+  const departmentOptions = [
+    { label: 'All Departments', value: 'all' },
+    ...departments.map(dept => ({ label: dept.label, value: dept.id }))
+  ];
 
   // Generate years list (current year ± 5 years)
   const years = useMemo(() => {
@@ -365,32 +335,7 @@ const ReportsScreen = () => {
     setAttendanceData(applyDepartmentFilter(rawAttendanceData));
   }, [rawAttendanceData, applyDepartmentFilter]);
 
-  // Load departments for CEO/Super Admin
-  useEffect(() => {
-    const loadDepartments = async () => {
-      if (!isFullControlUser) return;
-      setDepartmentsLoading(true);
-      try {
-        const profiles = await fetchProfiles();
-        const deptMap = new Map();
-        (profiles || []).forEach((p) => {
-          const option = makeDepartmentOption(p.empDeptt || p.emp_deptt, p.department);
-          if (option) {
-            deptMap.set(option.value, option);
-          }
-        });
-        const options = Array.from(deptMap.values()).sort((a, b) =>
-          a.label.localeCompare(b.label)
-        );
-        setDepartmentOptions([{ label: 'All Departments', value: 'all' }, ...options]);
-      } catch (error) {
-        console.error('Failed to load departments', error);
-      } finally {
-        setDepartmentsLoading(false);
-      }
-    };
-    loadDepartments();
-  }, [isFullControlUser]);
+  // Departments are now loaded via useDepartments() hook - no need for separate loading
 
   const handleGenerateReport = async () => {
     setLoading(true);

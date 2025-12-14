@@ -16,6 +16,7 @@ import * as Location from 'expo-location';
 import { useAuth } from '../contexts/AuthContext';
 import { getProfile } from '../lib/auth';
 import { fetchAssignments, fetchLocations, isWithinGeofence, fetchSupervisorLocations, isOfficeLocation } from '../lib/locations';
+import { fetchZones } from '../lib/zones';
 import { fetchStaff, fetchSupervisors } from '../lib/staff';
 import { clockIn, clockOut, fetchTodayAttendance } from '../lib/attendance';
 import { uploadPhoto } from '../lib/photoStorage';
@@ -263,9 +264,18 @@ const MarkAttendanceScreen = () => {
       
       const isSelfAction = selectedStaff && selectedStaff === currentUserProfile?.user_id;
       
+      // For supervisor in team mode, require staff to be selected
+      if (isSupervisor && supervisorTeamMode && !selectedStaff) {
+        Alert.alert('Error', 'Please select a team member first');
+        setVerifyingLocation(false);
+        return;
+      }
+      
+      // Fetch locations early so it's available in all code paths
+      const latest = await fetchLocations();
+      
       // For Manager/GM clocking themselves, verify it's an office location
       if (isManagerOrGM && isSelfAction) {
-        const latest = await fetchLocations();
         const loc = (latest || []).find(l => l.id === currentLocationId);
         if (!loc) {
           Alert.alert('Error', 'Location not found');
@@ -291,15 +301,59 @@ const MarkAttendanceScreen = () => {
       });
       const { latitude, longitude } = position.coords;
 
-      // Refresh locations to avoid stale values after edits
-      const latest = await fetchLocations();
-      const loc = (latest || []).find(l => l.id === currentLocationId);
-      if (!loc) {
-        Alert.alert('Error', 'Location not found');
-        return;
+      // Get staff's assigned zone for verification
+      let ok = false;
+      let verificationMessage = '';
+      
+      // For staff members OR when supervisor/manager is clocking someone else, verify against the staff's assigned zone
+      if (isStaff || (selectedStaff && selectedStaff !== currentUserProfile?.user_id)) {
+        // For staff or when clocking staff, verify against their assigned zone (NOT supervisor's location)
+        const staffId = isStaff ? currentUserProfile?.user_id : selectedStaff;
+        const assignment = assignments.find(a => a.staff_id === staffId && a.is_active);
+        
+        if (!assignment) {
+          Alert.alert('Error', 'No active assignment found for this staff member');
+          setVerifyingLocation(false);
+          return;
+        }
+        
+        if (assignment.zone_id) {
+          try {
+            const allZones = await fetchZones();
+            const zone = allZones.find(z => z.id === assignment.zone_id);
+            if (zone) {
+              ok = isWithinGeofence(latitude, longitude, zone.center_lat, zone.center_lng, zone.radius_meters);
+              const staffName = staff.find(s => s.user_id === staffId)?.name || 'Staff member';
+              verificationMessage = ok 
+                ? `Location verified: ${staffName} is within assigned zone "${zone.name}"` 
+                : `${staffName} is not within their assigned zone "${zone.name}"`;
+            } else {
+              Alert.alert('Error', 'Zone not found for this assignment');
+              setVerifyingLocation(false);
+              return;
+            }
+          } catch (error) {
+            console.error('Error fetching zone:', error);
+            Alert.alert('Error', 'Failed to verify zone');
+            setVerifyingLocation(false);
+            return;
+          }
+        } else {
+          Alert.alert('Error', 'No zone assignment found for this staff member');
+          setVerifyingLocation(false);
+          return;
+        }
+      } else {
+        // For Manager/GM clocking themselves, verify against office location
+        const loc = (latest || []).find(l => l.id === currentLocationId);
+        if (!loc) {
+          Alert.alert('Error', 'Location not found');
+          setVerifyingLocation(false);
+          return;
+        }
+        ok = isWithinGeofence(latitude, longitude, loc.center_lat, loc.center_lng, loc.radius_meters);
+        verificationMessage = ok ? `Location verified at ${loc.name}` : 'You are not within the assigned location';
       }
-
-      const ok = isWithinGeofence(latitude, longitude, loc.center_lat, loc.center_lng, loc.radius_meters);
       if (ok) {
         // Filter locations based on user role and assignments after verification
         let filteredLocations = [];
@@ -334,10 +388,10 @@ const MarkAttendanceScreen = () => {
         }
 
         setLocations(filteredLocations);
-        Alert.alert('Success', `Location verified at ${loc.name}`);
+        Alert.alert('Success', verificationMessage || 'Location verified');
         setLocationVerified(true);
       } else {
-        Alert.alert('Location Error', 'You are not within the assigned location');
+        Alert.alert('Location Error', verificationMessage || 'You are not within the assigned location');
       }
     } catch (error) {
       console.error('Location error:', error);
@@ -397,10 +451,15 @@ const MarkAttendanceScreen = () => {
     
     try {
       setLoading(true);
+      // Get zone_id from assignment
+      const assignment = assignments.find(a => a.staff_id === actedStaffId && a.is_active);
+      const zoneId = assignment?.zone_id || null;
+      
       const result = await clockIn({
         staff_id: actedStaffId,
         supervisor_id: (isSupervisor && supervisorTeamMode) ? currentUserProfile?.user_id : (clockAsSupervisor ? currentUserProfile?.user_id : currentSupervisorId),
-        nc_location_id: currentLocationId,
+        zone_id: zoneId,
+        nc_location_id: assignment?.location_id || currentLocationId, // Keep for backward compatibility
         overtime,
         double_duty: doubleDuty,
         lat: lat || currentLat,
@@ -464,10 +523,15 @@ const MarkAttendanceScreen = () => {
     
     try {
       setLoading(true);
+      // Get zone_id from assignment
+      const assignment = assignments.find(a => a.staff_id === actedStaffId && a.is_active);
+      const zoneId = assignment?.zone_id || null;
+      
       const result = await clockOut({
         staff_id: actedStaffId,
         supervisor_id: (isSupervisor && supervisorTeamMode) ? currentUserProfile?.user_id : (clockAsSupervisor ? currentUserProfile?.user_id : currentSupervisorId),
-        nc_location_id: currentLocationId,
+        zone_id: zoneId,
+        nc_location_id: assignment?.location_id || currentLocationId, // Keep for backward compatibility
         lat: lat || currentLat,
         lng: lng || currentLng,
         clock_out_photo_url: photoPath,
@@ -537,26 +601,55 @@ const MarkAttendanceScreen = () => {
         setCurrentLat(latitude);
         setCurrentLng(longitude);
 
-        const latest = await fetchLocations();
-        const loc = (latest || []).find(l => l.id === currentLocationId);
-
-        if (!loc) {
-          Alert.alert('Error', 'Location not found');
-          return;
-        }
-
-        // For Manager/GM clocking themselves, verify they're at office location
-        if (isManagerOrGM && isSelfAction) {
-          if (!isOfficeLocation(loc)) {
-            Alert.alert('Error', 'Managers and General Managers must clock in at office location');
+        // Verify against zone for staff, or location for managers
+        let ok = false;
+        if (isStaff || (selectedStaff && selectedStaff !== currentUserProfile?.user_id)) {
+          // Verify against staff's assigned zone
+          const staffId = isStaff ? currentUserProfile?.user_id : selectedStaff;
+          const assignment = assignments.find(a => a.staff_id === staffId && a.is_active);
+          
+          if (assignment && assignment.zone_id) {
+            try {
+              const allZones = await fetchZones();
+              const zone = allZones.find(z => z.id === assignment.zone_id);
+              if (zone) {
+                ok = isWithinGeofence(latitude, longitude, zone.center_lat, zone.center_lng, zone.radius_meters);
+                if (!ok) {
+                  Alert.alert('Error', `Clock-in blocked: not within assigned zone (${zone.name})`);
+                  return;
+                }
+              } else {
+                Alert.alert('Error', 'Zone not found for this assignment');
+                return;
+              }
+            } catch (error) {
+              console.error('Error fetching zone:', error);
+              Alert.alert('Error', 'Failed to verify zone');
+              return;
+            }
+          } else {
+            Alert.alert('Error', 'No zone assignment found');
             return;
           }
-        }
-
-        const ok = isWithinGeofence(latitude, longitude, loc.center_lat, loc.center_lng, loc.radius_meters);
-        if (!ok) {
-          Alert.alert('Error', 'Clock-in blocked: not within location');
-          return;
+        } else {
+          // For Manager/GM clocking themselves, verify against office location
+          const latest = await fetchLocations();
+          const loc = (latest || []).find(l => l.id === currentLocationId);
+          if (!loc) {
+            Alert.alert('Error', 'Location not found');
+            return;
+          }
+          if (isManagerOrGM && isSelfAction) {
+            if (!isOfficeLocation(loc)) {
+              Alert.alert('Error', 'Managers and General Managers must clock in at office location');
+              return;
+            }
+          }
+          ok = isWithinGeofence(latitude, longitude, loc.center_lat, loc.center_lng, loc.radius_meters);
+          if (!ok) {
+            Alert.alert('Error', 'Clock-in blocked: not within location');
+            return;
+          }
         }
       }
 
@@ -610,26 +703,55 @@ const MarkAttendanceScreen = () => {
         setCurrentLat(latitude);
         setCurrentLng(longitude);
 
-        const latest = await fetchLocations();
-        const loc = (latest || []).find(l => l.id === currentLocationId);
-
-        if (!loc) {
-          Alert.alert('Error', 'Location not found');
-          return;
-        }
-
-        // For Manager/GM clocking themselves, verify they're at office location
-        if (isManagerOrGM && isSelfAction) {
-          if (!isOfficeLocation(loc)) {
-            Alert.alert('Error', 'Managers and General Managers must clock out at office location');
+        // Verify against zone for staff, or location for managers
+        let ok = false;
+        if (isStaff || (selectedStaff && selectedStaff !== currentUserProfile?.user_id)) {
+          // Verify against staff's assigned zone
+          const staffId = isStaff ? currentUserProfile?.user_id : selectedStaff;
+          const assignment = assignments.find(a => a.staff_id === staffId && a.is_active);
+          
+          if (assignment && assignment.zone_id) {
+            try {
+              const allZones = await fetchZones();
+              const zone = allZones.find(z => z.id === assignment.zone_id);
+              if (zone) {
+                ok = isWithinGeofence(latitude, longitude, zone.center_lat, zone.center_lng, zone.radius_meters);
+                if (!ok) {
+                  Alert.alert('Error', `Clock-out blocked: not within assigned zone (${zone.name})`);
+                  return;
+                }
+              } else {
+                Alert.alert('Error', 'Zone not found for this assignment');
+                return;
+              }
+            } catch (error) {
+              console.error('Error fetching zone:', error);
+              Alert.alert('Error', 'Failed to verify zone');
+              return;
+            }
+          } else {
+            Alert.alert('Error', 'No zone assignment found');
             return;
           }
-        }
-
-        const ok = isWithinGeofence(latitude, longitude, loc.center_lat, loc.center_lng, loc.radius_meters);
-        if (!ok) {
-          Alert.alert('Error', 'Clock-out blocked: not within location');
-          return;
+        } else {
+          // For Manager/GM clocking themselves, verify against office location
+          const latest = await fetchLocations();
+          const loc = (latest || []).find(l => l.id === currentLocationId);
+          if (!loc) {
+            Alert.alert('Error', 'Location not found');
+            return;
+          }
+          if (isManagerOrGM && isSelfAction) {
+            if (!isOfficeLocation(loc)) {
+              Alert.alert('Error', 'Managers and General Managers must clock out at office location');
+              return;
+            }
+          }
+          ok = isWithinGeofence(latitude, longitude, loc.center_lat, loc.center_lng, loc.radius_meters);
+          if (!ok) {
+            Alert.alert('Error', 'Clock-out blocked: not within location');
+            return;
+          }
         }
       }
 
@@ -1063,7 +1185,7 @@ const MarkAttendanceScreen = () => {
                 <TouchableOpacity
                   style={[styles.verifyButton, locationVerified && styles.verifiedButton]}
                   onPress={handleVerifyLocation}
-                  disabled={locationVerified || !currentLocationId || verifyingLocation}
+                  disabled={locationVerified || !currentLocationId || !selectedStaff || verifyingLocation}
                 >
                   <Text style={styles.verifyButtonText}>
                     {verifyingLocation ? '⏳ Verifying Location...' : locationVerified ? '✓ Location Verified' : 'Verify Location'}

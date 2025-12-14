@@ -16,7 +16,7 @@ export const assignStaff = async (payload) => {
     const response = await apiClient.post('/assignments', {
       staff_id: payload.staff_id,
       supervisor_id: payload.supervisor_id,
-      nc_location_id: payload.nc_location_id
+      zone_id: payload.zone_id
     });
     return response.data;
   } catch (error) {

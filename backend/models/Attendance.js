@@ -11,10 +11,15 @@ const attendanceSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
+  zoneId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Zone',
+    required: false // Will be required once migration is complete
+  },
   ncLocationId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Location',
-    required: true
+    required: false // Keep for backward compatibility
   },
   attendanceDate: {
     type: String, // Format: YYYY-MM-DD

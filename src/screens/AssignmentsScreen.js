@@ -18,6 +18,7 @@ import {
 } from '../lib/staff';
 import { fetchLocations } from '../lib/locations';
 import { assignStaff, fetchAssignments, unassignStaff, assignSupervisorToLocation, fetchSupervisorLocations, unassignSupervisorFromLocation } from '../lib/assignments';
+import { fetchZones } from '../lib/zones';
 import SimpleDropdown from '../components/ui/SimpleDropdown';
 import SearchableDropdown from '../components/ui/SearchableDropdown';
 import {
@@ -25,7 +26,8 @@ import {
   normalizeRole,
   isAtLeastRole,
 } from '../lib/roles';
-import { ALL_DEPARTMENTS_OPTION, DEPARTMENTS, getDepartmentLabel } from '../lib/departments';
+import { ALL_DEPARTMENTS_OPTION, getDepartmentLabel } from '../lib/departments';
+import { useDepartments } from '../hooks/useDepartments';
 
 const arraysAreEqual = (a = [], b = []) => {
   if (a.length !== b.length) {
@@ -38,12 +40,14 @@ const arraysAreEqual = (a = [], b = []) => {
 
 const AssignmentsScreen = () => {
   const { profile } = useAuth();
+  const { departments: DEPARTMENTS } = useDepartments(); // Fetch departments from API
   const [supervisorId, setSupervisorId] = useState('');
   const [staffId, setStaffId] = useState('');
-  const [locationId, setLocationId] = useState('');
+  const [zoneId, setZoneId] = useState('');
   const [supervisors, setSupervisors] = useState([]);
   const [staff, setStaff] = useState([]);
   const [locations, setLocations] = useState([]);
+  const [zones, setZones] = useState([]);
   const [assignments, setAssignments] = useState([]);
   const [supLocs, setSupLocs] = useState([]);
   const [supLocSupervisorId, setSupLocSupervisorId] = useState('');
@@ -221,7 +225,7 @@ const AssignmentsScreen = () => {
   }, []);
 
   const handleAssign = async () => {
-    if (!supervisorId || !staffId || !locationId) {
+    if (!supervisorId || !staffId || !zoneId) {
       Alert.alert('Error', 'Please select all fields');
       return;
     }
@@ -246,7 +250,7 @@ const AssignmentsScreen = () => {
     }
     
     try {
-      await assignStaff({ supervisor_id: supervisorId, staff_id: staffId, nc_location_id: locationId });
+      await assignStaff({ supervisor_id: supervisorId, staff_id: staffId, zone_id: zoneId });
 
       // Only update managerId - department is set during user creation
       const supervisor = supervisors.find((s) => s.user_id === supervisorId);
@@ -258,7 +262,7 @@ const AssignmentsScreen = () => {
 
       Alert.alert('Success', 'Staff assigned successfully');
       setStaffId('');
-      setLocationId('');
+      setZoneId('');
       setSupervisorId('');
       await loadAll();
     } catch (error) {
@@ -267,6 +271,52 @@ const AssignmentsScreen = () => {
       console.error('Assignment error:', error);
     }
   };
+
+  // Load zones when supervisor is selected
+  useEffect(() => {
+    const loadZonesForSupervisor = async () => {
+      if (!supervisorId) {
+        setZones([]);
+        setZoneId('');
+        return;
+      }
+
+      try {
+        // Get locations assigned to this supervisor
+        const supervisorLocationIds = supLocs
+          .filter(sl => sl.supervisor_id === supervisorId)
+          .map(sl => sl.nc_location_id);
+
+        if (supervisorLocationIds.length === 0) {
+          setZones([]);
+          setZoneId('');
+          return;
+        }
+
+        // Fetch zones for all locations assigned to this supervisor
+        const allZones = [];
+        for (const locationId of supervisorLocationIds) {
+          try {
+            const locationZones = await fetchZones(locationId);
+            allZones.push(...locationZones);
+          } catch (error) {
+            console.error(`Error loading zones for location ${locationId}:`, error);
+          }
+        }
+
+        setZones(allZones);
+        if (allZones.length > 0 && !zoneId) {
+          // Optionally set first zone as default
+          // setZoneId(allZones[0].id);
+        }
+      } catch (error) {
+        console.error('Error loading zones:', error);
+        setZones([]);
+      }
+    };
+
+    loadZonesForSupervisor();
+  }, [supervisorId, supLocs]);
 
   const handleAssignSupLoc = async () => {
     if (!supLocSupervisorId || !supLocLocationId) {
@@ -510,11 +560,16 @@ const AssignmentsScreen = () => {
         }
       }
       
-      if (staffDepartmentFilter === ALL_DEPARTMENTS_OPTION.id) {
-        return true;
+      // For General Managers and CEO/Super Admin, apply department filter if set
+      if (!isManagerOnly) {
+        if (staffDepartmentFilter === ALL_DEPARTMENTS_OPTION.id) {
+          return true;
+        }
+        const supervisorDepartment = supervisor.department || managerDepartmentMap[supervisor.manager_id] || null;
+        return supervisorDepartment === staffDepartmentFilter || supervisorDepartment === null;
       }
-      const supervisorDepartment = supervisor.department || managerDepartmentMap[supervisor.manager_id] || null;
-      return supervisorDepartment === staffDepartmentFilter || supervisorDepartment === null;
+      
+      return true;
     })
     .map((supervisor) => ({
       label: `${supervisor.name || supervisor.email} (${getDepartmentLabel(
@@ -544,11 +599,12 @@ const AssignmentsScreen = () => {
       }
     }
     
-    // Apply department filter (only for General Managers and above)
+    // Apply department filter
     if (isManagerOnly) {
       // Managers are already filtered by their department above
       return true;
     }
+    // For General Managers and CEO/Super Admin, apply department filter if set
     if (staffDepartmentFilter === ALL_DEPARTMENTS_OPTION.id) {
       return true;
     }
@@ -583,10 +639,15 @@ const AssignmentsScreen = () => {
      );
    }
  
+  // Visibility logic: Higher roles see all sections from lower roles
+  // Manager: Staff Assignments, Assign Supervisor to Location
+  // General Manager: Everything Manager sees + General Manager Departments + Supervisor Hierarchy
+  // CEO/Super Admin: Everything (all sections)
+  const isManagerOrAbove = isAtLeastRole(currentRole, ROLE.MANAGER);
   const shouldShowFullManagementTools = isGeneralManagerOrAbove && !isCeoOrSuperAdmin;
-  const showSupervisorHierarchySection = isGeneralManager;
-  const showGeneralManagerDepartments = isGeneralManagerOrAbove && !isGeneralManager;
-  const showStaffAssignmentTools = isManagerOnly && !isCeoOrSuperAdmin;
+  const showSupervisorHierarchySection = isGeneralManagerOrAbove; // GM, CEO, Super Admin
+  const showGeneralManagerDepartments = isGeneralManagerOrAbove; // GM, CEO, Super Admin
+  const showStaffAssignmentTools = isManagerOrAbove; // Manager, GM, CEO, Super Admin
   const hierarchyManagers = isManagerOnly
     ? managers.filter((manager) => manager.user_id === currentUserId)
     : managers;
@@ -792,30 +853,40 @@ const AssignmentsScreen = () => {
         </View>
  
         <View style={styles.pickerContainer}>
-          <Text style={styles.pickerLabel}>Location</Text>
+          <Text style={styles.pickerLabel}>Zone</Text>
           <SearchableDropdown
             options={[
-              { label: 'Select location', value: '' },
-              ...locations.map((l) => ({ label: l.name, value: l.id, code: l.code || '' }))
+              { label: 'Select zone', value: '' },
+              ...zones.map((z) => ({ 
+                label: `${z.name} (${z.location_name})`, 
+                value: z.id, 
+                locationName: z.location_name || '' 
+              }))
             ]}
-            selectedValue={locationId}
-            onValueChange={setLocationId}
-            placeholder="Select location"
+            selectedValue={zoneId}
+            onValueChange={setZoneId}
+            placeholder={supervisorId ? (zones.length === 0 ? 'No zones available for this supervisor' : 'Select zone') : 'Select supervisor first'}
             style={styles.pickerWrapper}
-            searchPlaceholder="Search by location name..."
+            disabled={!supervisorId || zones.length === 0}
+            searchPlaceholder="Search by zone name..."
             getSearchText={(option) => {
               if (!option || option.value === '') return '';
               const name = option.label || '';
-              const code = option.code || '';
-              return `${name} ${code}`.toLowerCase();
+              const locationName = option.locationName || '';
+              return `${name} ${locationName}`.toLowerCase();
             }}
           />
+          {supervisorId && zones.length === 0 && (
+            <Text style={styles.helperText}>
+              No zones found. Make sure the supervisor is assigned to a location and zones are created for that location.
+            </Text>
+          )}
         </View>
 
         <TouchableOpacity
-          style={[styles.assignButton, (!supervisorId || !staffId || !locationId) && styles.disabledButton]}
+          style={[styles.assignButton, (!supervisorId || !staffId || !zoneId) && styles.disabledButton]}
           onPress={handleAssign}
-          disabled={!supervisorId || !staffId || !locationId || loading}
+          disabled={!supervisorId || !staffId || !zoneId || loading}
         >
           <Text style={styles.assignButtonText}>Assign</Text>
         </TouchableOpacity>
@@ -840,6 +911,9 @@ const AssignmentsScreen = () => {
                       return false;
                     }
                   }
+                  
+                  // For General Managers and CEO/Super Admin, show all supervisors
+                  // (no department filtering needed here as they can manage all)
                   
                   // Filter out supervisors who are already assigned to any location
                   if (!Array.isArray(supLocs) || supLocs.length === 0) {
@@ -931,7 +1005,10 @@ const AssignmentsScreen = () => {
                     })()}
                   </Text>
                   <Text style={styles.assignmentText}>
-                    <Text style={styles.label}>Location:</Text> {locations.find((l) => l.id === assignment.nc_location_id)?.name || '—'}
+                    <Text style={styles.label}>Zone:</Text> {assignment.zone_name || '—'}
+                  </Text>
+                  <Text style={styles.assignmentText}>
+                    <Text style={styles.label}>Location:</Text> {assignment.location_name || '—'}
                   </Text>
                 </View>
                 <TouchableOpacity

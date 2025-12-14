@@ -1,16 +1,26 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { DEPARTMENTS } from '../lib/departments';
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
+import { useDepartments } from '../hooks/useDepartments';
 
 const DepartmentFilter = ({ selectedDepartment, onDepartmentChange }) => {
-  const departments = [
+  const { departments, loading } = useDepartments();
+  
+  const departmentsList = [
     { id: 'all', label: 'All' },
-    ...DEPARTMENTS
+    ...departments
   ];
+
+  if (loading) {
+    return (
+      <View style={styles.container}>
+        <ActivityIndicator size="small" color="#007AFF" />
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
-      {departments.map((dept) => (
+      {departmentsList.map((dept) => (
         <TouchableOpacity
           key={dept.id}
           style={[
